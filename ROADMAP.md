@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15. Current releases: core v0.1.2, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+_Last updated 2026-10-15 (per-server roadmaps added). Current releases: core v0.1.2, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -85,12 +85,31 @@ Labs and PoCs may use the servers before then.
 | [G9](https://github.com/dr-stutters/stutters-mcp-core/issues/26) | **Public release checklist**: scrub history for lab data, docs site, CONTRIBUTING/SECURITY.md, PyPI trusted publishing, drop `CORE_READ_TOKEN` | PyPI account | M |
 | G10 | **Multi-instance support** (several ISE/FMC/CatC targets per server, selected per call) | — | M |
 
+## Prerequisites to unblock (ranked by items unblocked)
+
+Compiled from the four server roadmaps (2026-10-15). Items in **Now** need none of these; they run on today's lab.
+
+| # | Prerequisite | Who / effort | Unblocks |
+|---|---|---|---|
+| P1 | **Inbound reachability dCloud → cortex**: appliances and CML nodes on 198.18.128.0/18 must reach cortex (dCloud VPN address 10.16.104.82) for webhooks and syslog. Unverified. | Test from a CML node; maybe a dCloud route/NAT | CatC webhooks (catc D7), FTD syslog (fmc F7), ISE remote syslog (ise I12) |
+| P2 | **ISE pxGrid persona + pxGrid client certificate** (+ approval or auto-approve; server → ISE :8910) | ISE UI/API toggle (lab) + cert from the ISE internal CA | ise I7, I15; CatC↔ISE integration (catc D8, D9, D13) |
+| P3 | **CML registered licence** (20 nodes + extra users) instead of EVAL (5 nodes) | Licence purchase/registration | cml L15, L17; relieves capacity limits on cml L10/L11/L13/L14, catc D13/D15, fmc F10/F11 |
+| P4 | **Windows lab server (AD + CA)** reachable and configured (the `Windows_Server` MCP host is still a placeholder) | Point at a dCloud/CML Windows Server | ise I8 (cert lifecycle), I11 (AD join), cml L11/L13 (EAP-TLS clients); optional CA for P2 |
+| P5 | **FMC UI-only setup**: a dedicated API user with a custom role; an eStreamer client cert | FMC UI (manual) | fmc F16 (gate), F12 (eStreamer) |
+| P6 | **SWIM image**: a `c8000v-universalk9.<other-ver>.SPA.bin` from cisco.com (entitled account), plus an HTTP server CatC can reach | cisco.com download + a small web server | catc D12 |
+| P7 | **Older product versions** for the support matrix: CML 2.7–2.9, ISE 3.2–3.4, FMC 7.4/7.6, CatC 2.3.7/3.1 | dCloud labs or customer labs | Production gate: cml L18, ise I17, catc D18, fmc F17 (core G6) |
+| P8 | **Quick lab toggles**: SXP service on ISE | ISE UI/API (lab) | ise I9 |
+| P9 | **Larger environments**: multi-node ISE (PAN/MnT/PSN) | dCloud lab | ise I19 (gate) |
+| P10 | **One-offs**: physical AP (catc D14), ServiceNow instance (catc D16), SCC tenant for cdFMC (fmc F15), a Windows client with Secure Client for posture (ise I14), a self-hosted GitHub runner on cortex (cml L12) | Various | One item each |
+
+Time-limited: the FMC Smart Licensing evaluation expires ≈2027-01-12; the ISE evaluation licence (Advantage, needed for pxGrid) also expires.
+
 ## External services: suite summary
 
 | Service | Needed for | Provided by | Network path | Status |
 |---|---|---|---|---|
 | CML controller (EVAL: 5 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
-| ISE pxGrid service + pxGrid client certificate | ISE real-time sessions, ANC, TrustSec | ISE node (enable pxGrid persona) + CA (ISE internal or Windows CA) | server → ISE :8910 (WebSocket/STOMP) | ⏳ ise Next |
+| ISE pxGrid service + pxGrid client certificate | ISE real-time sessions, ANC, TrustSec | ISE node (enable pxGrid persona: currently OFF, :8910 refused) + CA (ISE internal or Windows CA) | server → ISE :8910 (WebSocket/STOMP) | ⏳ ise Next (P2) |
 | CatC event webhooks (destination + subscription) | CatC real-time issues/events | CatC Platform → Event Management | **CatC → server** HTTPS (needs a reachable URL) | ⏳ catc Now/Next |
 | FTD syslog | FMC connection and intrusion events | FTD platform settings (syslog destination, logging on rules) | **FTD → server** UDP/TCP 514/5514 | ⏳ fmc Next |
 | FMC eStreamer | Event history/replay | eStreamer client cert created in the FMC UI | **server → FMC** TCP 8302 | ⏳ fmc Later |
