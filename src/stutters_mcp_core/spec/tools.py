@@ -5,7 +5,7 @@
 
 import re
 from typing import Annotated, Any, Literal
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from fastmcp import Context
 from fastmcp.tools import ToolResult
@@ -23,6 +23,16 @@ _PATH_RE = re.compile(r"^/?[A-Za-z0-9_\-/.{}:~%=,@+]+$")
 def get_specs(ctx: Context) -> SpecStore:
     store: SpecStore = ctx.lifespan_context["specs"]
     return store
+
+
+def fill_path(path: str, values: dict[str, str]) -> str:
+    """Substitute known {placeholders} (URL-quoted); unknown ones are left for validate_path to reject."""
+
+    def sub(m: re.Match[str]) -> str:
+        name = m.group(1)
+        return quote(str(values[name]), safe="") if name in values else m.group(0)
+
+    return re.sub(r"\{([A-Za-z0-9_]+)\}", sub, path)
 
 
 def validate_path(path: str) -> str:
@@ -103,8 +113,9 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
         src_name = source or store.default_source
         if src_name not in store.sources:
             raise InvalidRequest(f"Unknown source {src_name!r}; choose from {', '.join(store.sources)}")
-        client = store.sources[src_name].client(store.app)
-        return await client.request(method, validate_path(path), params=params, json=body, expect="json")
+        src = store.sources[src_name]
+        path = fill_path(path, src.path_params(store.app) if src.path_params else {})
+        return await src.client(store.app).request(method, validate_path(path), params=params, json=body)
 
     surfaces_note = "API surface to call (default: the main one; see status for the list)"
 
@@ -134,8 +145,11 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
                 return text_result(
                     dumps(compact(await _call(ctx, method, path, params, body, source), keep_empty=True))
                 )
+            store = get_specs(ctx)
+            src = store.sources.get(source or store.default_source)
+            filled = fill_path(path, src.path_params(store.app) if src and src.path_params else {})
             plan = Plan(
-                f"{method} {validate_path(path)}",
+                f"{method} {validate_path(filled)}",
                 details={k: v for k, v in {"params": params, "body": body, "source": source}.items() if v},
             )
             result = await preview_or_apply(

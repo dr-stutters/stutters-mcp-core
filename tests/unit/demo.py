@@ -185,6 +185,8 @@ def create_server(settings: DemoSettings, *, auth: AuthProvider | None = None) -
         client_factory=DemoApp,
         register=[register],
         status=DemoApp.status,
-        spec_sources=lambda app: [SpecSource("main", load_spec, client=lambda a: a.api)],
+        spec_sources=lambda app: [
+            SpecSource("main", load_spec, client=lambda a: a.api, path_params=lambda a: {"tenant": "t1"})
+        ],
         auth=auth,
     )

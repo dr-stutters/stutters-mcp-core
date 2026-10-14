@@ -16,7 +16,7 @@ import mcp.types as mt
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult
 
-from stutters_mcp_core.formatting import MASK, is_secret_key
+from stutters_mcp_core.formatting import MASK, is_secret_key, mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
 
 audit = logging.getLogger("stutters_mcp_core.audit")
@@ -30,6 +30,7 @@ def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
         if is_secret_key(k) and v not in (None, ""):
             out[k] = MASK
             continue
+        v = mask_secrets(v)
         text = json.dumps(v, default=str)
         out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
     return out

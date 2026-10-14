@@ -11,7 +11,7 @@ import email.utils
 import logging
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any, Literal
 
 import httpx
@@ -212,12 +212,16 @@ class ApiClient:
         headers: dict[str, str] | None = None,
         expect: Expect = "json",
         retry: bool | None = None,
+        ok_status: Iterable[int] = (),
         timeout: float | None = None,  # noqa: ASYNC109 - per-request HTTP timeout, not a cancel scope
     ) -> Any:
         """Send a request relative to base_url. Returns parsed JSON (None for empty bodies), text,
-        bytes, or the httpx.Response depending on `expect`. `retry` overrides whether 5xx/connection
+        bytes, or the httpx.Response depending on `expect`. Statuses in `ok_status` (e.g. {500} for an
+        API that reports "not found" as 500 with a body) are returned instead of raised; use
+        expect="response" to inspect the status. `retry` overrides whether 5xx/connection
         errors are retried (default: only for idempotent methods); 429 is always retried."""
         method = method.upper()
+        ok_codes = frozenset(ok_status)
         retry_5xx = method in IDEMPOTENT if retry is None else retry
         reauthed = False
         attempt = 0
@@ -258,7 +262,7 @@ class ApiClient:
                 log.warning("%s %s on %s %s; retry %d", self.product, code, method, path, attempt)
                 await asyncio.sleep(delay if delay is not None else _backoff(attempt))
                 continue
-            if resp.is_error or resp.is_redirect:
+            if (resp.is_error or resp.is_redirect) and code not in ok_codes:
                 raise self.error_from_response(resp)
             return self._decode(resp, expect)
 

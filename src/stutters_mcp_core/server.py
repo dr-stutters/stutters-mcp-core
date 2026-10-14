@@ -108,8 +108,8 @@ def build_server(
             try:
                 info = await status(app)
                 log.info("Connected to %s at %s: %s", spec.product, settings.url, _brief(info))
-            except UpstreamError as e:
-                # Don't refuse to start: the model can call <prefix>_status to see the problem.
+            except Exception as e:  # noqa: BLE001 - never refuse to start over the status probe
+                # The model can call <prefix>_status to see the problem.
                 log.error("%s startup check failed: %s", spec.product, e)
         state: dict[str, Any] = {
             "client": app,
@@ -175,6 +175,8 @@ def _register_status(
                 out[spec.prefix] = await status(get_client(ctx))
             except UpstreamError as e:
                 out[spec.prefix] = {"error": str(e)}
+            except ValueError as e:  # e.g. missing credentials
+                out[spec.prefix] = {"error": f"Configuration problem: {e}"}
         tiers = reg.tiers
         out["server"] = {
             "name": spec.name,
