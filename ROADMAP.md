@@ -1,0 +1,101 @@
+# Suite roadmap (stutters-mcp-core + the four servers)
+
+_Last updated 2026-10-15. Current releases: core v0.1.2, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+
+This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
+Each server has its own `ROADMAP.md`:
+[cml](https://github.com/dr-stutters/cml-mcp-server/blob/main/ROADMAP.md) ·
+[ise](https://github.com/dr-stutters/ise-mcp-server/blob/main/ROADMAP.md) ·
+[catc](https://github.com/dr-stutters/catc-mcp-server/blob/main/ROADMAP.md) ·
+[fmc](https://github.com/dr-stutters/fmc-mcp-server/blob/main/ROADMAP.md).
+Every item is also a GitHub issue under the matching milestone.
+
+## Scope and principles
+
+| | |
+|---|---|
+| **Audiences** | Labs (dCloud/CML) → customer PoCs and demos → production networks → public open source |
+| **Buckets** | **Now** (next 1–2 releases) · **Next** · **Later** · **Production gate** (prerequisite for production or public use) |
+| **Priorities** | 1. Depth per product · 2. Real-time / event-driven · 3. Cross-product workflows (as MCP prompts) |
+| **Event design** | Each server runs its own event receiver with a bounded in-memory buffer, exposed as MCP tools/resources. **No shared broker or extra infrastructure.** External prerequisites (pxGrid certificates, webhook reachability, syslog destinations) are listed per item. |
+| **Workflows** | MCP **prompts shipped in each server**. No orchestrator service. Claude chains the servers. |
+| **Out of scope** | Other products (NetBox, Splunk, Windows, WLC, SD-WAN...); a shared message bus; an orchestrator server. Revisit after Later. |
+
+Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or needs new infrastructure or lab capability.
+
+## Core roadmap
+
+### Now
+| # | Item | Why | External needs | Size |
+|---|---|---|---|---|
+| [C1](https://github.com/dr-stutters/stutters-mcp-core/issues/6) | **Bump all servers to core v0.1.2** | `list_result` keeps `Page.more`; CatC lists without a total stop looking complete | none | S |
+| [C2](https://github.com/dr-stutters/stutters-mcp-core/issues/7) | **MCP prompts support**: `PromptRegistrar` with naming (`<prefix>_<workflow>`), argument docs, and a contract-linter extension (description, arguments, which servers a prompt expects) | Workflows ship as prompts in each server | none | S |
+| [C3](https://github.com/dr-stutters/stutters-mcp-core/issues/8) | **Event framework v1**: `EventSource` base (a background task started and stopped by the lifespan, reconnect with backoff), `EventBuffer` (bounded ring buffer; per-source cursor; filters by time, type and key), generic tools `<prefix>_list_events` / `<prefix>_event_sources` (status, lag, drops), MCP resource `events://<prefix>/recent` | One pattern for pxGrid, webhooks, syslog and the CML websocket | none (each source lists its own) | M |
+| [C4](https://github.com/dr-stutters/stutters-mcp-core/issues/9) | **Inbound receivers in core**: a `WebhookReceiver` (Starlette route on the existing HTTP app, per-source shared-secret/HMAC or basic auth, allow-listed source IPs) and a `SyslogReceiver` (UDP/TCP listener, RFC 5424/3164 parsing, per-sender allow-list) | CatC webhooks, FMC syslog | A port reachable from the appliance; firewall rules | M |
+| [C5](https://github.com/dr-stutters/stutters-mcp-core/issues/10) | **`fetch_page(max_page=...)` override** (deferred request from CatC) | Per-endpoint page caps without several pagers | none | S |
+
+### Next
+| # | Item | Why | External needs | Size |
+|---|---|---|---|---|
+| [C6](https://github.com/dr-stutters/stutters-mcp-core/issues/11) | **Optional persistence for events**: write-through to a local SQLite file (bounded by age and size) so events survive restarts | Investigations look back hours, not minutes | A Docker volume | M |
+| [C7](https://github.com/dr-stutters/stutters-mcp-core/issues/12) | **Event correlation helpers**: key extraction (MAC, IP, username, device) + `<prefix>_events_for(key)`, so prompts can join events across servers in the model | "What happened to this host?" across products | none | S |
+| [C8](https://github.com/dr-stutters/stutters-mcp-core/issues/13) | **XML helper in core** (if a second server needs it; ISE keeps `xmlutil.py` until then) | Avoid duplicates | none | S |
+| [C9](https://github.com/dr-stutters/stutters-mcp-core/issues/14) | **Prompt test kit**: render every prompt, check its referenced tools exist on the target servers (by name/prefix), snapshot tests | Prompts rot silently otherwise | none | S |
+
+### Later
+| # | Item | Why | External needs | Size |
+|---|---|---|---|---|
+| [C10](https://github.com/dr-stutters/stutters-mcp-core/issues/15) | **MCP notifications for events** (resource-updated / subscriptions) once clients support them well | Push instead of poll | Client support | M |
+| [C11](https://github.com/dr-stutters/stutters-mcp-core/issues/16) | Event fan-out to an external sink (HTTP or syslog forwarder) as an *option*, not a requirement | Feeds SIEMs without making them a dependency | The sink | S |
+| [C12](https://github.com/dr-stutters/stutters-mcp-core/issues/17) | Long-running task registry (MCP tasks) for deploys, discoveries and SWIM | Better UX than wait/poll for 10+ minute jobs | Client support | M |
+
+## Cross-product workflow prompts (catalogue)
+
+Each prompt lives in the server that **starts** the workflow and names the other servers it expects.
+The model carries out the steps with each server's tools; every write step stays preview-first.
+
+| Prompt | Owner | Uses | Bucket |
+|---|---|---|---|
+| `cml_build_test_lab` (FTD / routers / access-switch recipes) | cml | cml | Now |
+| `ise_troubleshoot_endpoint_access` (MAC or user → sessions, failure reason, policy hit, switch port) | ise | ise, cml or catc (for device CLI) | Now |
+| `fmc_why_blocked` (src/dst/port → rule lookup, packet tracer, hit counts, recent deploys) | fmc | fmc | Now |
+| `catc_onboard_device` (credentials → discovery → site → provision → verify) | catc | catc | Now |
+| `catc_onboard_switch_with_nac` (CatC onboarding + ISE NAD + AAA settings + first auth check) | catc | catc, ise | Next |
+| `ise_quarantine_host` (ANC + CoA, then FMC dynamic object/rule if needed, then verify) | ise | ise, fmc | Next |
+| `fmc_onboard_ftd` (CML FTDv recipe or existing FTD → register → policy → deploy → verify) | fmc | fmc, cml | Next |
+| `catc_change_window` (template preview → deploy → compliance → rollback plan) | catc | catc | Next |
+| `cml_replicate_site` (read CatC/ISE/FMC config for a site → build a CML replica) | cml | cml, catc, ise, fmc | Later |
+| `ise_incident_timeline` (pxGrid + MnT + FMC events + CatC issues for a host, merged by time) | ise | ise, fmc, catc | Later |
+
+## Production gate
+
+**Nothing goes to production networks or public release until every item below is done** for core and that server.
+Labs and PoCs may use the servers before then.
+
+| # | Item | Notes / external needs | Size |
+|---|---|---|---|
+| [G1](https://github.com/dr-stutters/stutters-mcp-core/issues/18) | **OAuth 2.1 for HTTP** (FastMCP auth; GitHub or customer IdP), keeping named bearer tokens for automation | An IdP app registration; public HTTPS if used with Claude Desktop connectors | M |
+| [G2](https://github.com/dr-stutters/stutters-mcp-core/issues/19) | **Per-user roles** (`ro` / `rw` / `admin`) mapped to tiers; the identity shows in previews and the audit log | — | M |
+| [G3](https://github.com/dr-stutters/stutters-mcp-core/issues/20) | **Least-privilege account guides** per product, tested: ISE custom admin roles (ERS operator, MnT), FMC custom user role, CatC custom role (RBAC), CML non-admin | Customer creates the accounts | M |
+| [G4](https://github.com/dr-stutters/stutters-mcp-core/issues/21) | **Secrets**: `*_PASSWORD_FILE` / Docker secrets everywhere; no secrets in env dumps; optional Vault/1Password loader | A secret store (optional) | S |
+| [G5](https://github.com/dr-stutters/stutters-mcp-core/issues/22) | **Observability**: structured logs, `/metrics` (Prometheus: calls, errors, latency, upstream status, rate-limit waits), request ids end to end | A Prometheus scraper (optional) | S |
+| [G6](https://github.com/dr-stutters/stutters-mcp-core/issues/23) | **Support matrix + compatibility tests**: at least two versions per product (e.g. ISE 3.3/3.4/3.5, FMC 7.4/7.6/10.0, CatC 2.3.7/3.1, CML 2.8–2.10) | Labs on each version (dCloud/CML/customer) | L |
+| [G7](https://github.com/dr-stutters/stutters-mcp-core/issues/24) | **Safety rails for production**: dry-run-only mode, change-window guard (`MCP_CHANGE_WINDOW`), per-tool deny-list, max blast radius (devices per deploy), two-person confirm (optional) | — | M |
+| [G8](https://github.com/dr-stutters/stutters-mcp-core/issues/25) | **Security review + dependency/SBOM scanning** in CI (pip-audit, Trivy on images), signed images (cosign) | GitHub Actions | S |
+| [G9](https://github.com/dr-stutters/stutters-mcp-core/issues/26) | **Public release checklist**: scrub history for lab data, docs site, CONTRIBUTING/SECURITY.md, PyPI trusted publishing, drop `CORE_READ_TOKEN` | PyPI account | M |
+| G10 | **Multi-instance support** (several ISE/FMC/CatC targets per server, selected per call) | — | M |
+
+## External services: suite summary
+
+| Service | Needed for | Provided by | Network path | Status |
+|---|---|---|---|---|
+| CML controller (EVAL: 5 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
+| ISE pxGrid service + pxGrid client certificate | ISE real-time sessions, ANC, TrustSec | ISE node (enable pxGrid persona) + CA (ISE internal or Windows CA) | server → ISE :8910 (WebSocket/STOMP) | ⏳ ise Next |
+| CatC event webhooks (destination + subscription) | CatC real-time issues/events | CatC Platform → Event Management | **CatC → server** HTTPS (needs a reachable URL) | ⏳ catc Now/Next |
+| FMC syslog / eStreamer | FMC connection and intrusion events | FTD/FMC platform settings; eStreamer client cert | **FTD/FMC → server** UDP/TCP 514 or :8302 | ⏳ fmc Next |
+| CML event websocket | Lab state changes | CML controller | server → CML :443 (wss) | ⏳ cml Next |
+| FTDv / FMCv / cat8000v / cat9000v images | Lab recipes | CML image library | — | ✅ present |
+| Device images (.bin) for SWIM | CatC SWIM live tests | cisco.com download | upload to CatC | ❌ missing |
+| Windows AD + CA | ISE AD identity, EAP-TLS, pxGrid certs | Existing Windows lab server (`Windows_Server` MCP) | ISE ↔ AD | ⏳ when needed |
+| IdP (OAuth) | G1 | GitHub / customer IdP | Internet | Production gate |
+| Public HTTPS ingress (Caddy/VPS or tunnel) | Claude Desktop connectors; cloud webhooks | VPS / tunnel provider | Internet → server | Production gate (optional) |
