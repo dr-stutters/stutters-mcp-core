@@ -25,11 +25,18 @@ Write and dangerous tools are **preview-first**:
 
 1. A call without `confirm` performs no change. It returns a preview (method + path, field diff
    against current state, side effects such as "requires deploy to 3 devices") and a confirm token.
-2. The token is `HMAC(secret, tool, canonical-args-hash, caller-identity, expiry)`, single-use, with a
-   TTL (`MCP_CONFIRM_TTL`, default 300 s).
-3. Re-issuing the identical call with `confirm=<token>` executes it. Different args, a different
-   caller, a reused or expired token is rejected with an explanatory error.
-4. The secret is random per process unless `MCP_CONFIRM_SECRET` is set (needed for restarts/replicas).
+2. The token is a random id held server-side with the tool name, a hash of the canonical arguments,
+   the caller identity, a fingerprint of the target's current state and an expiry
+   (`MCP_CONFIRM_TTL`, default 600 s). It is single-use.
+3. Re-issuing the identical call with `confirm=<token>` recomputes the plan and executes it. Different
+   args, a different caller, a changed target, a reused or expired token are rejected with an
+   explanatory error, and any mismatch burns the token.
+4. Tokens live in process memory: a restart invalidates outstanding previews (acceptable; the model
+   just previews again). Multiple replicas would need sticky sessions or a shared store.
+
+(Amended 2026-10-14 during M1: a server-side store replaced the originally proposed stateless HMAC
+token, because single-use and target-changed checks need state anyway; this is the design proven in
+netbox-mcp.)
 5. Preview and execution are both written to the audit log with the caller identity.
 
 The generic `<prefix>_api_call` escape hatch is a `read` tool for GET and goes through the same
