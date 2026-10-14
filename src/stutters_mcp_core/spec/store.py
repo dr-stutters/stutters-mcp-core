@@ -42,6 +42,8 @@ class SpecSource:
     version: Callable[[Any], Awaitable[str]] | None = None
     path_prefix: str = ""
     description: str = ""
+    # Defaults for {placeholders} in paths given to api_call, e.g. {"domainUUID": app.domain_uuid}.
+    path_params: Callable[[Any], dict[str, str]] | None = None
 
 
 def bundled(package: str, resource: str) -> Callable[[Any], Awaitable[Doc]]:

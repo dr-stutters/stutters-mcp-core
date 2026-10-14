@@ -36,6 +36,24 @@ async def test_status_reports_upstream_error(api: Any) -> None:
     assert "denied access" in data["demo"]["error"]
 
 
+async def test_startup_survives_missing_credentials() -> None:
+    from stutters_mcp_core import BaseServerSettings
+
+    async def status(app: object) -> dict[str, str]:
+        make_settings(username=None).require_credentials("DEMO_")
+        return {}
+
+    from stutters_mcp_core import ServerSpec, build_server
+
+    spec = ServerSpec("x-mcp-server", "x", "X", "X_", "Tools for X (test).")
+    server = build_server(
+        spec, make_settings(), client_factory=lambda s: object(), register=[], status=status
+    )
+    data = await call_tool(server, "x_status")
+    assert "DEMO_USERNAME" in data["x"]["error"]
+    assert BaseServerSettings  # imported for clarity
+
+
 async def test_tiers_control_registration(api: Any) -> None:
     async def names(**kw: Any) -> set[str]:
         async with Client(create_server(make_settings(**kw))) as c:
@@ -134,6 +152,8 @@ async def test_api_call_read_only_and_write(api: Any) -> None:
     async with Client(ro) as c:
         tool = next(t for t in await c.list_tools() if t.name == "demo_api_call")
         assert "method" not in tool.input_schema["properties"]
+    api.get("/api/t1/items").mock(return_value=httpx.Response(200, json=[]))
+    assert json.loads(await call_tool(ro, "demo_api_call", {"path": "/api/{tenant}/items"})) == []
     assert json.loads(await call_tool(ro, "demo_api_call", {"path": "/api/items/3"})) == {
         "id": 3,
         "psk": "********",

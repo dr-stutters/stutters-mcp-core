@@ -201,7 +201,8 @@ async def test_contract():                       # run with writes+dangerous on 
 
 ## 8. Docker / cortex
 
-Copy `docs/templates/Dockerfile` and `docs/templates/docker-compose.yml`, then replace `__SERVER__`
+Copy `docs/templates/Dockerfile`, `docs/templates/docker-compose.yml` and `docs/templates/dockerignore`
+(as `.dockerignore`, which keeps `.env` out of the build context), then replace `__SERVER__`
 (e.g. `ise-mcp-server`), `__PORT__` (8032 CML, 8033 ISE, 8034 CatC, 8035 FMC) and `__ENV__` (e.g. `ISE`).
 The image build needs the private core while the repos are private. Pass it as a BuildKit secret:
 `docker build --secret id=core_read_token,env=CORE_READ_TOKEN .`

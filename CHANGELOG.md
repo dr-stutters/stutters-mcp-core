@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-14
+
+Requests from the first server builds (see ~/MCP-Suite/CORE-REQUESTS.md).
+
+### Added
+- `SpecSource.path_params`: defaults for `{placeholders}` in `<prefix>_api_call` paths (e.g. FMC `domainUUID`).
+- `ApiClient.request(ok_status=...)`: return listed error statuses instead of raising, with auth and retries intact (ISE MnT).
+- `formatting.mask_secrets()` (mask without dropping anything); `NOT_SECRET_KEYS` allow-list.
+- `docs/templates/dockerignore`.
+
+### Fixed
+- Audit log masks secrets nested inside tool arguments (e.g. `api_call` bodies).
+- Flag-like values ("true"/"false"/"enabled"...) under secret-looking keys are no longer masked;
+  `passwordIDStore`, `enableMultiSecret` allow-listed.
+- Server startup no longer fails when the status probe raises a non-upstream error; `require_credentials`
+  raises `AuthError`; `<prefix>_status` reports configuration problems.
+- Dockerfile template copies `LICENSE` (needed by `license-files`).
+
 ## [0.1.0] - 2026-10-14
 
 ### Added

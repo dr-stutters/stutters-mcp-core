@@ -41,8 +41,23 @@ def max_chars() -> int:
     return _max_chars
 
 
+# Keys that match SECRET_KEY_RE but hold flags or names, not secrets. Extend per product with
+# `NOT_SECRET_KEYS.update({...})` at import time if needed.
+NOT_SECRET_KEYS: set[str] = {"passwordIDStore", "enableMultiSecret", "passwordPolicy", "secretStorage"}
+_FLAG_VALUES = {"true", "false", "yes", "no", "enabled", "disabled", "on", "off"}
+
+
 def is_secret_key(key: str) -> bool:
-    return bool(SECRET_KEY_RE.search(key))
+    return key not in NOT_SECRET_KEYS and bool(SECRET_KEY_RE.search(key))
+
+
+def _is_flag(v: Any) -> bool:
+    return isinstance(v, bool) or (isinstance(v, str) and v.strip().lower() in _FLAG_VALUES)
+
+
+def mask_secrets(data: Any) -> Any:
+    """Mask secret values anywhere in `data` without dropping or reshaping anything else."""
+    return compact(data, drop=(), keep_empty=True)
 
 
 def mask_all(v: Any) -> Any:
@@ -51,7 +66,7 @@ def mask_all(v: Any) -> Any:
         return {k: mask_all(x) for k, x in v.items()}
     if isinstance(v, list):
         return [mask_all(x) for x in v]
-    return v if isinstance(v, bool) or v is None else MASK
+    return v if _is_flag(v) or v is None else MASK
 
 
 def compact(
@@ -73,7 +88,7 @@ def compact(
         for k, val in v.items():
             if k in drop_set:
                 continue
-            if mask_secrets and is_secret_key(str(k)) and not isinstance(val, bool):
+            if mask_secrets and is_secret_key(str(k)) and not _is_flag(val):
                 if val in (None, "", [], {}):
                     if keep_empty:
                         out[k] = val
