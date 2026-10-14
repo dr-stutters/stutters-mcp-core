@@ -1,0 +1,61 @@
+# Reusable release: on a v* tag, build sdist/wheel, attach them to a GitHub release and, when the
+# caller has a Dockerfile and sets `image: true`, push ghcr.io/<owner>/<repo>:<version> and :latest.
+name: python-release
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        type: boolean
+        default: false
+      publish-pypi:
+        type: boolean
+        default: false   # ADR-001: git tags for now
+    secrets:
+      CORE_READ_TOKEN:
+        required: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow git dependencies on private repos
+        env:
+          CORE_READ_TOKEN: ${{ secrets.CORE_READ_TOKEN }}
+        if: env.CORE_READ_TOKEN != ''
+        run: git config --global url."https://x-access-token:${CORE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.9"
+      - run: uv build
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+      - name: Publish to PyPI
+        if: inputs.publish-pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Log in to GHCR
+        if: inputs.image
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push image
+        if: inputs.image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          secrets: |
+            core_read_token=${{ secrets.CORE_READ_TOKEN }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
