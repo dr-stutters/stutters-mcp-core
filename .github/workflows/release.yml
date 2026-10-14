@@ -1,0 +1,9 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    uses: ./.github/workflows/python-release.yml
