@@ -92,7 +92,8 @@ Labs and PoCs may use the servers before then.
 | CML controller (EVAL: 5 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
 | ISE pxGrid service + pxGrid client certificate | ISE real-time sessions, ANC, TrustSec | ISE node (enable pxGrid persona) + CA (ISE internal or Windows CA) | server → ISE :8910 (WebSocket/STOMP) | ⏳ ise Next |
 | CatC event webhooks (destination + subscription) | CatC real-time issues/events | CatC Platform → Event Management | **CatC → server** HTTPS (needs a reachable URL) | ⏳ catc Now/Next |
-| FMC syslog / eStreamer | FMC connection and intrusion events | FTD/FMC platform settings; eStreamer client cert | **FTD/FMC → server** UDP/TCP 514 or :8302 | ⏳ fmc Next |
+| FTD syslog | FMC connection and intrusion events | FTD platform settings (syslog destination, logging on rules) | **FTD → server** UDP/TCP 514/5514 | ⏳ fmc Next |
+| FMC eStreamer | Event history/replay | eStreamer client cert created in the FMC UI | **server → FMC** TCP 8302 | ⏳ fmc Later |
 | CML event websocket | Lab state changes | CML controller | server → CML :443 (wss) | ⏳ cml Next |
 | FTDv / FMCv / cat8000v / cat9000v images | Lab recipes | CML image library | — | ✅ present |
 | Device images (.bin) for SWIM | CatC SWIM live tests | cisco.com download | upload to CatC | ❌ missing |
