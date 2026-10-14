@@ -192,6 +192,26 @@ async def test_offset_limit_one_based_without_total() -> None:
 
 
 @respx.mock
+async def test_offset_limit_without_total_flags_more() -> None:
+    respx.get(f"{BASE}/l").mock(side_effect=lambda r: httpx.Response(200, json={"items": [1, 2]}))
+    async with ApiClient(BASE) as c:
+        page = await OffsetLimit(items="items", max_page=2).fetch_page(c, "/l", limit=2, offset=4)
+    assert page.total is None and page.more and page.next_offset == 6 and not page.complete
+
+
+@respx.mock
+async def test_fetch_all_reports_partial() -> None:
+    from stutters_mcp_core.http import fetch_all
+
+    respx.get(f"{BASE}/l").mock(
+        side_effect=lambda r: httpx.Response(200, json={"items": [0] * 3, "total": 99})
+    )
+    async with ApiClient(BASE) as c:
+        page = await fetch_all(OffsetLimit(items="items", total="total", max_page=3), c, "/l", cap=6)
+    assert len(page.items) == 6 and not page.complete
+
+
+@respx.mock
 async def test_page_number_pager_unaligned_offset() -> None:
     data = list(range(7))
 

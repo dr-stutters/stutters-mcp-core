@@ -26,6 +26,13 @@ All notable changes to this project are documented here. The format follows
 - `testing`: tool contract linter, `call_tool`, `live_settings` (auto-skip when the lab is unreachable).
 - docs/BUILDING-A-SERVER.md and Docker/compose templates.
 
+### Security (from pre-release review)
+- Raw non-GET `<prefix>_api_call` requires the dangerous tier; its responses are secret-masked.
+- `validate_path` rejects percent-encoded dot/slash segments.
+- Secret masking covers nested values and more key names; BGP `community` values are no longer masked;
+  `metadata` is no longer dropped.
+- `Page.more`/`complete` signal possibly-truncated results when the API reports no total; `fetch_all` returns a Page.
+
 ## [0.0.1] - 2026-10-14
 
 ### Added

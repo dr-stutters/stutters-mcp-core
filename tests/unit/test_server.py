@@ -128,19 +128,30 @@ async def test_spec_tools(api: Any) -> None:
 
 
 async def test_api_call_read_only_and_write(api: Any) -> None:
-    api.get("/api/items/3").mock(return_value=httpx.Response(200, json={"id": 3}))
+    api.get("/api/items/3").mock(return_value=httpx.Response(200, json={"id": 3, "psk": "k", "note": None}))
     post = api.post("/api/items").mock(return_value=httpx.Response(201, json={"id": 9}))
     ro = create_server(make_settings())
     async with Client(ro) as c:
         tool = next(t for t in await c.list_tools() if t.name == "demo_api_call")
         assert "method" not in tool.input_schema["properties"]
-    assert json.loads(await call_tool(ro, "demo_api_call", {"path": "/api/items/3"})) == {"id": 3}
+    assert json.loads(await call_tool(ro, "demo_api_call", {"path": "/api/items/3"})) == {
+        "id": 3,
+        "psk": "********",
+        "note": None,
+    }
     with pytest.raises(ToolError, match="Invalid path"):
         await call_tool(ro, "demo_api_call", {"path": "https://evil/x"})
     with pytest.raises(ToolError, match="Invalid path"):
         await call_tool(ro, "demo_api_call", {"path": "/api/../secret"})
 
-    rw = create_server(make_settings(mcp_enable_writes=True))
+    with pytest.raises(ToolError, match="Invalid path"):
+        await call_tool(ro, "demo_api_call", {"path": "/api/%2e%2e/secret"})
+    writes_only = create_server(make_settings(mcp_enable_writes=True))
+    async with Client(writes_only) as c:
+        tool = next(t for t in await c.list_tools() if t.name == "demo_api_call")
+        assert "method" not in tool.input_schema["properties"]  # raw writes need the dangerous tier
+
+    rw = create_server(make_settings(mcp_enable_writes=True, mcp_enable_dangerous=True))
     async with Client(rw) as c:
         args = {"method": "POST", "path": "/api/items", "body": {"name": "x"}}
         prev = json.loads((await c.call_tool("demo_api_call", args)).content[0].text)

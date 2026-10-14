@@ -39,8 +39,10 @@ token, because single-use and target-changed checks need state anyway; this is t
 netbox-mcp.)
 5. Preview and execution are both written to the audit log with the caller identity.
 
-The generic `<prefix>_api_call` escape hatch is a `read` tool for GET and goes through the same
-guard (as `write`) for any other method.
+The generic `<prefix>_api_call` escape hatch is GET-only (a `read` tool) unless **dangerous** is
+enabled; then it also accepts POST/PUT/PATCH/DELETE as a `dangerous`, preview-first tool. It is not
+gated by `write`, because a raw call can reach deploys and deletions of live policy. Its responses go
+through secret masking like every other tool.
 
 ## Consequences
 

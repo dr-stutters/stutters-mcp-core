@@ -10,12 +10,15 @@ Tools always speak 0-based `offset` + `limit`; pagers translate.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from stutters_mcp_core.http.client import ApiClient
+
+log = logging.getLogger(__name__)
 
 Extractor = str | Callable[[Any], Any] | None
 
@@ -39,13 +42,19 @@ class Page:
     items: list[Any]
     offset: int
     total: int | None = None  # None when the API doesn't say
+    more: bool = False  # with total None: the fetch stopped at `limit`, so more items may exist
 
     @property
     def next_offset(self) -> int | None:
         end = self.offset + len(self.items)
         if self.total is not None:
             return end if end < self.total else None
-        return None
+        return end if self.more else None
+
+    @property
+    def complete(self) -> bool:
+        """True when nothing exists beyond this page."""
+        return self.next_offset is None
 
     def meta(self) -> dict[str, Any]:
         m: dict[str, Any] = {"offset": self.offset, "returned": len(self.items)}
@@ -114,7 +123,7 @@ class OffsetLimit:
                 if total is None and len(out) < limit:
                     total = offset + len(out)  # short page: we've seen the end
                 break
-        return Page(out[:limit], offset, total)
+        return Page(out[:limit], offset, total, more=total is None and len(out) >= limit)
 
 
 @dataclass
@@ -155,7 +164,7 @@ class PageNumber:
                 if total is None:
                     total = offset + len(out)
                 break
-        return Page(out[:limit], offset, total)
+        return Page(out[:limit], offset, total, more=total is None and len(out) >= limit)
 
 
 @dataclass
@@ -185,7 +194,11 @@ def page_of(items: list[Any], *, limit: int, offset: int = 0) -> Page:
 
 async def fetch_all(
     pager: Pager, client: ApiClient, path: str, params: dict[str, Any] | None = None, *, cap: int = 10_000
-) -> list[Any]:
-    """Every item (up to `cap`), for tools that need to aggregate or search a whole collection."""
+) -> Page:
+    """Every item (up to `cap`), for tools that aggregate or search a whole collection. Check
+    `page.complete`: when False the collection was larger than `cap` and results are partial; say
+    so in the tool output."""
     page = await pager.fetch_page(client, path, params, limit=cap, offset=0)
-    return page.items
+    if not page.complete:
+        log.warning("fetch_all(%s) hit the %d-item cap; results are partial", path, cap)
+    return page

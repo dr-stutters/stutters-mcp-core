@@ -5,13 +5,14 @@
 
 import re
 from typing import Annotated, Any, Literal
+from urllib.parse import unquote
 
 from fastmcp import Context
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
 from stutters_mcp_core.errors import InvalidRequest
-from stutters_mcp_core.formatting import dumps, object_result, text_result
+from stutters_mcp_core.formatting import compact, dumps, object_result, text_result
 from stutters_mcp_core.spec.store import SpecStore
 from stutters_mcp_core.writes import Confirm, Plan, ToolRegistrar, preview_or_apply
 
@@ -26,7 +27,14 @@ def get_specs(ctx: Context) -> SpecStore:
 
 def validate_path(path: str) -> str:
     path = path.strip()
-    if not _PATH_RE.match(path) or ".." in path.split("/") or "//" in path:
+    decoded = unquote(path)
+    if (
+        not _PATH_RE.match(path)
+        or ".." in decoded.split("/")
+        or "//" in decoded
+        or "\\" in decoded
+        or re.search(r"%(2e|2f|5c)", path, re.IGNORECASE)
+    ):
         raise InvalidRequest(
             f"Invalid path {path!r}: give a path relative to the API base (e.g. '/api/v1/endpoint'), "
             "without scheme, host or query string (use `params` for the query)."
@@ -100,7 +108,7 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
 
     surfaces_note = "API surface to call (default: the main one; see status for the list)"
 
-    if settings.mcp_enable_writes:
+    if settings.mcp_enable_writes and settings.mcp_enable_dangerous:
         _DESC_API_CALL_RW = (
             f"Call any {product} REST endpoint (escape hatch for things no other tool covers). GET runs "
             f"immediately; other methods are preview-first: the first call returns a preview and a confirm "
@@ -108,10 +116,9 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
             f"{prefix}_search_spec and bodies with {prefix}_get_definition."
         )
 
-        @reg.write(
+        @reg.dangerous(
             title=f"Raw {product} API call",
             name=f"{prefix}_api_call",
-            destructive=True,
             description=_DESC_API_CALL_RW,
         )
         async def api_call_rw(
@@ -124,7 +131,9 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
             confirm: Confirm = None,
         ) -> ToolResult:
             if method == "GET":
-                return text_result(dumps(await _call(ctx, method, path, params, body, source)))
+                return text_result(
+                    dumps(compact(await _call(ctx, method, path, params, body, source), keep_empty=True))
+                )
             plan = Plan(
                 f"{method} {validate_path(path)}",
                 details={k: v for k, v in {"params": params, "body": body, "source": source}.items() if v},
@@ -142,7 +151,8 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
     else:
         _DESC_API_CALL_RO = (
             f"GET any {product} REST endpoint (escape hatch for things no other tool covers; this server "
-            f"is read-only). Find paths with {prefix}_search_spec."
+            f"allows raw GETs only; raw writes need MCP_ENABLE_DANGEROUS). Secret values are masked. "
+            f"Find paths with {prefix}_search_spec."
         )
 
         @reg.read(title=f"Raw {product} API GET", name=f"{prefix}_api_call", description=_DESC_API_CALL_RO)
@@ -152,4 +162,6 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
             params: Annotated[dict[str, Any] | None, Field(description="Query parameters")] = None,
             source: Annotated[str | None, Field(description=surfaces_note)] = None,
         ) -> ToolResult:
-            return text_result(dumps(await _call(ctx, "GET", path, params, None, source)))
+            return text_result(
+                dumps(compact(await _call(ctx, "GET", path, params, None, source), keep_empty=True))
+            )

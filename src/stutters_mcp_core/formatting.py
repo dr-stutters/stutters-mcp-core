@@ -21,12 +21,14 @@ _max_chars = 40_000
 # Keys whose values are secrets on one product or another (RADIUS/TACACS shared secrets, SNMP
 # communities, PSKs, passwords, private keys). Values are masked unless a tool opts out.
 SECRET_KEY_RE = re.compile(
-    r"(password|passphrase|secret|psk|preshared|pre_shared|private_?key|community|"
-    r"enable_?pass|auth_?key|priv_?key|api_?key|^token$|access_?token|refresh_?token)",
+    r"(password|passphrase|passwd|secret|psk|preshared|pre_shared|private_?key|enable_?pass|"
+    r"auth_?key|authentication_?key|priv_?key|api_?key|shared_?key|encryption_?key|"
+    r"message_?authenticator|^token$|auth_?token|access_?token|refresh_?token|x-auth|"
+    r"snmp\w*community|community_?(string|name)|r[ow]_?community|(read|write)_?community)",
     re.IGNORECASE,
 )
 MASK = "********"
-DEFAULT_DROP_KEYS = frozenset({"links", "link", "_links", "metadata"})
+DEFAULT_DROP_KEYS = frozenset({"links", "link", "_links"})
 
 
 def set_max_chars(n: int) -> None:
@@ -41,6 +43,15 @@ def max_chars() -> int:
 
 def is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key))
+
+
+def mask_all(v: Any) -> Any:
+    """Mask every scalar leaf (keeps structure so the model sees what kind of value is there)."""
+    if isinstance(v, dict):
+        return {k: mask_all(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [mask_all(x) for x in v]
+    return v if isinstance(v, bool) or v is None else MASK
 
 
 def compact(
@@ -62,13 +73,12 @@ def compact(
         for k, val in v.items():
             if k in drop_set:
                 continue
-            if (
-                mask_secrets
-                and is_secret_key(str(k))
-                and val not in (None, "", [], {})
-                and not isinstance(val, (dict, list, bool))
-            ):
-                out[k] = MASK
+            if mask_secrets and is_secret_key(str(k)) and not isinstance(val, bool):
+                if val in (None, "", [], {}):
+                    if keep_empty:
+                        out[k] = val
+                    continue
+                out[k] = mask_all(val)
                 continue
             val = walk(val)
             if not keep_empty and val in (None, "", [], {}):

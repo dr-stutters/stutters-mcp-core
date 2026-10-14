@@ -72,6 +72,27 @@ def test_compact_masks_secrets_and_drops_noise() -> None:
     }
 
 
+def test_masking_nested_values_and_bgp_communities() -> None:
+    data = {
+        "password": {"value": "x", "encrypted": True},
+        "communities": ["65000:1"],
+        "community": "65000:2",
+        "snmpCommunity": ["public"],
+        "radius": {"messageAuthenticatorCodeKey": "k", "keyEncryptionKey": "k2", "sharedSecret": ""},
+        "authToken": "t",
+        "metadata": {"lastUser": "admin"},
+    }
+    assert compact(data) == {
+        "password": {"value": "********", "encrypted": True},
+        "communities": ["65000:1"],
+        "community": "65000:2",
+        "snmpCommunity": ["********"],
+        "radius": {"messageAuthenticatorCodeKey": "********", "keyEncryptionKey": "********"},
+        "authToken": "********",
+        "metadata": {"lastUser": "admin"},
+    }
+
+
 def test_list_result_truncates_to_budget() -> None:
     set_max_chars(2000)
     try:

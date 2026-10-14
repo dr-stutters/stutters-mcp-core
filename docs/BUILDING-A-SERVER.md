@@ -178,6 +178,13 @@ def create_server(settings, *, auth=None, transport=None):
 
 `build_server` adds `<prefix>_status`, `<prefix>_search_spec`, `<prefix>_get_definition`,
 `<prefix>_api_call`, `/health`, audit logging and the writes/dangerous instructions.
+`<prefix>_api_call` only accepts non-GET methods when dangerous is enabled.
+
+**Always forward `auth=` to `build_server`.** If it's missing, the HTTP transport runs unauthenticated.
+`run_cli` only passes auth when it calls your `create_server`.
+
+Aggregating tools that use `fetch_all` must check `page.complete` and say when results are
+partial. List tools get this for free: `Page.more`/`next_offset` covers APIs that don't report a total.
 
 ## 7. Tests
 
