@@ -4,6 +4,13 @@ on:
   push:
     tags: ["v*"]
 
+# A reusable workflow can't get more permissions than its caller grants.
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
 jobs:
   release:
     uses: ./.github/workflows/python-release.yml
+    secrets: inherit

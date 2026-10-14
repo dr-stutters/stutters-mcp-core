@@ -221,6 +221,7 @@ jobs:
 # .github/workflows/release.yml
 name: release
 on: {push: {tags: ["v*"]}}
+permissions: {contents: write, packages: write, id-token: write}   # required: callers must grant these
 jobs:
   release:
     uses: dr-stutters/stutters-mcp-core/.github/workflows/python-release.yml@main
