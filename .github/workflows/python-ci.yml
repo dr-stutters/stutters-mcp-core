@@ -1,0 +1,41 @@
+# Reusable CI for stutters-mcp-core and every server that depends on it.
+#   jobs:
+#     ci:
+#       uses: dr-stutters/stutters-mcp-core/.github/workflows/python-ci.yml@main
+#       secrets: inherit
+name: python-ci
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+    secrets:
+      CORE_READ_TOKEN:
+        description: Token able to read the private stutters-mcp-core repo (consumers only).
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Allow git dependencies on private repos
+        env:
+          CORE_READ_TOKEN: ${{ secrets.CORE_READ_TOKEN }}
+        if: env.CORE_READ_TOKEN != ''
+        run: git config --global url."https://x-access-token:${CORE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.9"
+          python-version: ${{ inputs.python-version }}
+      - run: uv sync --locked
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy
+      - run: uv run pytest
+      - run: uv build
