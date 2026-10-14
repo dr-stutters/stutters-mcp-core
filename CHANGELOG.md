@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-15
+
+### Fixed
+- `list_result` kept `Page.more` only when it truncated: lists from APIs without a total (Catalyst Center)
+  lost `next_offset`. It now carries the source page's `more` flag.
+
 ## [0.1.1] - 2026-10-14
 
 Requests from the first server builds (see ~/MCP-Suite/CORE-REQUESTS.md).
