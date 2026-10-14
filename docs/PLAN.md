@@ -23,7 +23,7 @@ product-specific.
 | Writes | Off by default; preview-first with single-use confirm tokens; extra "dangerous" tier |
 | Transport | stdio **and** Streamable HTTP container from day one (cortex, ports 8032–8035) |
 | Test labs | lab (VPN): CML 198.18.128.10, ISE 198.18.134.35, Catalyst Center 198.18.128.11, FMC 198.18.134.76. Short-lived, so live tests auto-skip |
-| Supported versions | **Whatever the lab runs** = the tested matrix (CML confirmed 2.10.0 on 2026-10-14; others TBD on first connect). Older versions best-effort |
+| Supported versions | **Whatever the lab runs** = the tested matrix: CML 2.10.0, ISE 3.5.0.527 (standalone), Catalyst Center 3.2.2, FMC 10.0.1 (verified 2026-10-14). Older versions best-effort |
 | Disk location | `~/MCP-Suite/<repo>` |
 | Later roadmap | cdFMC (Security Cloud Control), ISE pxGrid, cross-product workflows. NetBox-MCP does **not** adopt core |
 | Naming | Packages `cml-mcp-server`, `ise-mcp-server`, `fmc-mcp-server`, `catc-mcp-server`; tools `cml_*`, `ise_*`, `fmc_*`, `catc_*` |
@@ -510,14 +510,15 @@ Resolved 2026-10-14: core name (`stutters-mcp-core`), no PyPI (git tags + GHCR),
 order CML → ISE → CatC → FMC, versions = whatever the lab runs, later scope = cdFMC + pxGrid +
 cross-product workflows, NetBox stays standalone.
 
-Lab probe 2026-10-14:
-| Lab | Host | Result |
-|---|---|---|
-| CML | 198.18.128.10 | Up, **2.10.0**, ready |
-| ISE | 198.18.134.35 | HTTPS up, but stored creds get **401** on OpenAPI + MnT; **ERS service disabled** (302 → /admin); port 9060 blocked → ERS must use 443 |
-| Catalyst Center | 198.18.128.11 | HTTPS up; version unknown (no creds yet) |
-| FMC | 198.18.134.76 | **No response** (booting, or not in this lab) |
+Lab probe 2026-10-14 (read-only login + version, all OK):
+| Lab | Host | Version | Notes |
+|---|---|---|---|
+| CML | 198.18.128.10 | 2.10.0 | 0 labs (empty) |
+| ISE | 198.18.134.35 | 3.5.0.527, standalone | OpenAPI, MnT and ERS all answer on 443; 9060 blocked → default ERS to 443 |
+| Catalyst Center | 198.18.128.11 | 3.2.2 | 0 devices (empty) |
+| FMC | 198.18.134.76 | 10.0.1 | Domain `Global`, 0 managed devices |
 
-Still open:
-1. ISE credentials for this lab, and permission to enable the ERS + OpenAPI services (Administration → System → Settings → API Settings).
-2. Catalyst Center and FMC credentials.
+All four present self-signed certs: lab `.env` files need `*_VERIFY_SSL=false` (or a CA bundle).
+The labs are empty, so seed scripts (and CML-built topologies) are needed for meaningful live tests.
+
+Nothing left open.

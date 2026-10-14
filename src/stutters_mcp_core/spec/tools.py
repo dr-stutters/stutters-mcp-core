@@ -1,0 +1,167 @@
+"""Generic spec-driven tools every server gets: <prefix>_search_spec, <prefix>_get_definition and
+<prefix>_api_call (GET-only unless writes are enabled; non-GET calls are preview-first)."""
+
+# No `from __future__ import annotations`: FastMCP inspects these signatures at registration time.
+
+import re
+from typing import Annotated, Any, Literal
+from urllib.parse import unquote
+
+from fastmcp import Context
+from fastmcp.tools import ToolResult
+from pydantic import Field
+
+from stutters_mcp_core.errors import InvalidRequest
+from stutters_mcp_core.formatting import compact, dumps, object_result, text_result
+from stutters_mcp_core.spec.store import SpecStore
+from stutters_mcp_core.writes import Confirm, Plan, ToolRegistrar, preview_or_apply
+
+# Relative API path: no scheme/host, no query string, no '..' segments.
+_PATH_RE = re.compile(r"^/?[A-Za-z0-9_\-/.{}:~%=,@+]+$")
+
+
+def get_specs(ctx: Context) -> SpecStore:
+    store: SpecStore = ctx.lifespan_context["specs"]
+    return store
+
+
+def validate_path(path: str) -> str:
+    path = path.strip()
+    decoded = unquote(path)
+    if (
+        not _PATH_RE.match(path)
+        or ".." in decoded.split("/")
+        or "//" in decoded
+        or "\\" in decoded
+        or re.search(r"%(2e|2f|5c)", path, re.IGNORECASE)
+    ):
+        raise InvalidRequest(
+            f"Invalid path {path!r}: give a path relative to the API base (e.g. '/api/v1/endpoint'), "
+            "without scheme, host or query string (use `params` for the query)."
+        )
+    if "{" in path:
+        raise InvalidRequest(f"Path {path!r} still has a {{placeholder}}; substitute the real id.")
+    return "/" + path.lstrip("/")
+
+
+def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = True) -> None:
+    prefix = reg.prefix
+    settings = reg.settings
+
+    _DESC_SEARCH_SPEC = (
+        f"Search the {product} OpenAPI spec for operations (method + path) and schemas. Use it to find "
+        f"endpoints for {prefix}_api_call or exact field names and enums."
+    )
+
+    @reg.read(
+        title=f"Search the {product} API spec", name=f"{prefix}_search_spec", description=_DESC_SEARCH_SPEC
+    )
+    async def search_spec(
+        ctx: Context,
+        query: Annotated[str, Field(description="Keywords, e.g. 'network device group' or 'sgt mapping'")],
+        source: Annotated[str | None, Field(description="Limit to one API surface/spec (see status)")] = None,
+        limit: Annotated[int, Field(ge=1, le=100)] = 20,
+    ) -> dict[str, Any]:
+        store = get_specs(ctx)
+        idx = await store.get()
+        hits = idx.search(query, limit=limit, source=source)
+        out: dict[str, Any] = {"query": query, "results": hits}
+        if not hits:
+            out["hint"] = "No match: try fewer or different keywords (singular nouns work best)."
+        if store.errors:
+            out["unavailable_specs"] = store.errors
+        return out
+
+    _DESC_GET_DEFINITION = (
+        f"Describe a {product} API operation (parameters, request fields, required fields) or a schema "
+        f"(fields with types and enums). Names come from {prefix}_search_spec."
+    )
+
+    @reg.read(
+        title=f"Describe a {product} API path or schema",
+        name=f"{prefix}_get_definition",
+        description=_DESC_GET_DEFINITION,
+    )
+    async def get_definition(
+        ctx: Context,
+        name: Annotated[
+            str,
+            Field(description="A schema name, a path ('/api/v1/endpoint/{id}'), or 'METHOD /path'"),
+        ],
+        source: Annotated[str | None, Field(description="API surface/spec to look in")] = None,
+    ) -> ToolResult:
+        idx = await get_specs(ctx).get()
+        return object_result(idx.definition(name, source=source), shape=False)
+
+    if not api_call:
+        return
+
+    async def _call(
+        ctx: Context, method: str, path: str, params: dict[str, Any] | None, body: Any, source: str | None
+    ) -> Any:
+        store = get_specs(ctx)
+        src_name = source or store.default_source
+        if src_name not in store.sources:
+            raise InvalidRequest(f"Unknown source {src_name!r}; choose from {', '.join(store.sources)}")
+        client = store.sources[src_name].client(store.app)
+        return await client.request(method, validate_path(path), params=params, json=body, expect="json")
+
+    surfaces_note = "API surface to call (default: the main one; see status for the list)"
+
+    if settings.mcp_enable_writes and settings.mcp_enable_dangerous:
+        _DESC_API_CALL_RW = (
+            f"Call any {product} REST endpoint (escape hatch for things no other tool covers). GET runs "
+            f"immediately; other methods are preview-first: the first call returns a preview and a confirm "
+            f"token, nothing changes until you repeat the call with confirm. Find paths with "
+            f"{prefix}_search_spec and bodies with {prefix}_get_definition."
+        )
+
+        @reg.dangerous(
+            title=f"Raw {product} API call",
+            name=f"{prefix}_api_call",
+            description=_DESC_API_CALL_RW,
+        )
+        async def api_call_rw(
+            ctx: Context,
+            method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"],
+            path: Annotated[str, Field(description="Path relative to the API base, ids substituted")],
+            params: Annotated[dict[str, Any] | None, Field(description="Query parameters")] = None,
+            body: Annotated[Any, Field(description="JSON request body (POST/PUT/PATCH)")] = None,
+            source: Annotated[str | None, Field(description=surfaces_note)] = None,
+            confirm: Confirm = None,
+        ) -> ToolResult:
+            if method == "GET":
+                return text_result(
+                    dumps(compact(await _call(ctx, method, path, params, body, source), keep_empty=True))
+                )
+            plan = Plan(
+                f"{method} {validate_path(path)}",
+                details={k: v for k, v in {"params": params, "body": body, "source": source}.items() if v},
+            )
+            result = await preview_or_apply(
+                ctx,
+                tool=f"{prefix}_api_call",
+                args={"method": method, "path": path, "params": params, "body": body, "source": source},
+                confirm=confirm,
+                plan=plan,
+                apply=lambda: _call(ctx, method, path, params, body, source),
+            )
+            return text_result(dumps(result))
+
+    else:
+        _DESC_API_CALL_RO = (
+            f"GET any {product} REST endpoint (escape hatch for things no other tool covers; this server "
+            f"allows raw GETs only; raw writes need MCP_ENABLE_DANGEROUS). Secret values are masked. "
+            f"Find paths with {prefix}_search_spec."
+        )
+
+        @reg.read(title=f"Raw {product} API GET", name=f"{prefix}_api_call", description=_DESC_API_CALL_RO)
+        async def api_call_ro(
+            ctx: Context,
+            path: Annotated[str, Field(description="Path relative to the API base, ids substituted")],
+            params: Annotated[dict[str, Any] | None, Field(description="Query parameters")] = None,
+            source: Annotated[str | None, Field(description=surfaces_note)] = None,
+        ) -> ToolResult:
+            return text_result(
+                dumps(compact(await _call(ctx, "GET", path, params, None, source), keep_empty=True))
+            )
