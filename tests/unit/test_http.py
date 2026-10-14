@@ -243,3 +243,11 @@ async def test_rate_limiter_paces_requests() -> None:
         async with limiter.slot():
             pass
     assert time.monotonic() - start >= 0.25
+
+
+@respx.mock
+async def test_ok_status_returns_instead_of_raising() -> None:
+    respx.get(f"{BASE}/mnt").mock(return_value=httpx.Response(500, text="<x>34110</x>"))
+    async with ApiClient(BASE, retries=0) as c:
+        resp = await c.get("/mnt", ok_status={500}, expect="response")
+    assert resp.status_code == 500 and "34110" in resp.text

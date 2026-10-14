@@ -121,9 +121,11 @@ class BaseServerSettings(BaseSettings):
         return self.token.get_secret_value() if self.token else ""
 
     def require_credentials(self, env_prefix: str) -> tuple[str, str]:
-        """(username, password), or a clear error naming the variables to set."""
+        """(username, password), or an AuthError naming the variables to set."""
         if not self.username or not self.password:
-            raise ValueError(f"Set {env_prefix}USERNAME and {env_prefix}PASSWORD")
+            from stutters_mcp_core.errors import AuthError
+
+            raise AuthError(f"No credentials configured: set {env_prefix}USERNAME and {env_prefix}PASSWORD")
         return self.username, self.password_value()
 
     def auth_token_hashes(self) -> dict[str, str]:

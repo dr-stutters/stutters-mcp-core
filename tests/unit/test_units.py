@@ -194,3 +194,41 @@ def test_index_roundtrip_and_errors() -> None:
         again.definition("Iten")
     with pytest.raises(ValueError):
         SpecIndex.from_json({**idx.to_json(), "format": 0})
+
+
+# --- 0.1.1 ---------------------------------------------------------------------------------
+
+
+def test_flags_and_allow_listed_keys_not_masked() -> None:
+    data = {"enableMultiSecret": "false", "passwordIDStore": "Internal Users", "sharedSecret": "abc"}
+    assert compact(data) == {
+        "enableMultiSecret": "false",
+        "passwordIDStore": "Internal Users",
+        "sharedSecret": "********",
+    }
+
+
+def test_audit_masks_nested_secrets() -> None:
+    body = {
+        "NetworkDevice": {
+            "authenticationSettings": {"radiusSharedSecret": "s3cret", "enableKeyWrap": "false"}
+        }
+    }
+    out = redact_args({"body": body})
+    assert (
+        "s3cret" not in str(out)
+        and out["body"]["NetworkDevice"]["authenticationSettings"]["enableKeyWrap"] == "false"
+    )
+
+
+def test_fill_path() -> None:
+    from stutters_mcp_core.spec.tools import fill_path
+
+    assert fill_path("/d/{domainUUID}/x/{id}", {"domainUUID": "a b"}) == "/d/a%20b/x/{id}"
+
+
+def test_missing_credentials_raise_auth_error() -> None:
+    from stutters_mcp_core.errors import AuthError
+
+    with pytest.raises(AuthError, match="DEMO_USERNAME"):
+        make_settings(username=None).require_credentials("DEMO_")
