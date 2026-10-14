@@ -232,3 +232,9 @@ def test_missing_credentials_raise_auth_error() -> None:
 
     with pytest.raises(AuthError, match="DEMO_USERNAME"):
         make_settings(username=None).require_credentials("DEMO_")
+
+
+def test_list_result_keeps_more_flag_without_total() -> None:
+    result = list_result(Page([{"id": 1}, {"id": 2}], offset=10, total=None, more=True))
+    payload: Any = result.structured_content
+    assert payload["next_offset"] == 12 and "total" not in payload

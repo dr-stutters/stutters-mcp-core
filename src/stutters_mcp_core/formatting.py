@@ -171,9 +171,8 @@ def list_result(
     while len(items) > 1 and len(dumps(items)) > _max_chars:
         items = items[: max(1, len(items) * 3 // 4)]
         truncated = True
-    meta = Page(items, page.offset, page.total).meta()
-    if page.total is None and truncated:
-        meta["next_offset"] = page.offset + len(items)
+    # Keep the source page's "more" signal (APIs without a total), and add our own truncation.
+    meta = Page(items, page.offset, page.total, more=page.more or truncated).meta()
     if truncated:
         meta["note"] = f"Output truncated to fit the size limit; {hint}."
     if extra:
