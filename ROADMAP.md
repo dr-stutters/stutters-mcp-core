@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15 (overnight 2): core v0.11.0. Production gate done in core except G6 (needs older product versions) and the owner-side parts of G9; Later C12 done; new items C13–C16 done. Servers are pull-only (ADR-003)._
+_Last updated 2026-10-15 (overnight 2): core v0.12.0. Production gate done in core except G6 (needs older product versions) and the owner-side parts of G9; Later C12 done; new items C13–C17 done. Servers are pull-only (ADR-003)._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -43,6 +43,7 @@ Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or ne
 | ✅ [C14](https://github.com/dr-stutters/stutters-mcp-core/issues/48) | **Runtime session tokens masked automatically** (✅ v0.11.0) | G4 masked configured secrets only | none | S |
 | ✅ [C15](https://github.com/dr-stutters/stutters-mcp-core/issues/49) | **Per-instance write rules** (✅ v0.11.0): `<P>_<NAME>_READ_ONLY/TWO_PERSON/CHANGE_WINDOW/MAX_BLAST_RADIUS` | Read-only production next to a lab in one server (ADR-004 follow-up) | none | M |
 | ✅ [C16](https://github.com/dr-stutters/stutters-mcp-core/issues/50) | **Per-caller rate limit** (✅ v0.11.0): `MCP_CALLER_RATE_LIMIT` (+ by role) | One client or leaked token could monopolise the appliance | none | S |
+| ✅ [C17](https://github.com/dr-stutters/stutters-mcp-core/issues/53) | **`<server> config`** (✅ v0.12.0): effective settings with sources, secrets set/unset only | ~60 settings and three secret sources were hard to verify on a container | none | S |
 
 ### Later
 _C6, C7, C10, C11 (event persistence, correlation, notifications, fan-out) were dropped with ADR-003._
