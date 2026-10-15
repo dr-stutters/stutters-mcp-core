@@ -33,11 +33,12 @@ from starlette.responses import JSONResponse
 from stutters_mcp_core import __version__
 from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
-from stutters_mcp_core.formatting import set_max_chars
+from stutters_mcp_core.formatting import mask_secrets, set_max_chars
 from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.roles import RoleMiddleware
+from stutters_mcp_core.secrets import SecretErrorMiddleware, scrub_error, scrub_url
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
@@ -112,10 +113,15 @@ def build_server(
         if status is not None:
             try:
                 info = await status(app)
-                log.info("Connected to %s at %s: %s", spec.product, settings.url, _brief(info))
+                log.info(
+                    "Connected to %s at %s: %s",
+                    spec.product,
+                    scrub_url(settings.url),
+                    _clean(_brief(mask_secrets(info)), settings),
+                )
             except Exception as e:  # noqa: BLE001 - never refuse to start over the status probe
                 # The model can call <prefix>_status to see the problem.
-                log.error("%s startup check failed: %s", spec.product, e)
+                log.error("%s startup check failed: %s", spec.product, _clean(str(e), settings))
         state: dict[str, Any] = {
             "client": app,
             "settings": settings,
@@ -149,6 +155,7 @@ def build_server(
         auth=auth,
         middleware=[AuditMiddleware(spec.name, roles)],
     )
+    mcp.add_middleware(SecretErrorMiddleware(settings))
     if roles is not None:
         mcp.add_middleware(RoleMiddleware(roles, mcp))
 
@@ -167,6 +174,11 @@ def build_server(
     if spec_sources is not None:
         register_spec_tools(reg, product=spec.product)
     return mcp
+
+
+def _clean(text: str, settings: BaseServerSettings) -> str:
+    """Error text for status: credential shapes and the configured secret values masked."""
+    return scrub_error(text, settings)
 
 
 def _policy_instructions(policy: SafetyPolicy) -> str:
@@ -207,16 +219,16 @@ def _register_status(
         out: dict[str, Any] = {}
         if status is not None:
             try:
-                out[spec.prefix] = await status(get_client(ctx))
+                out[spec.prefix] = mask_secrets(await status(get_client(ctx)))
             except UpstreamError as e:
-                out[spec.prefix] = {"error": str(e)}
+                out[spec.prefix] = {"error": _clean(str(e), settings)}
             except ValueError as e:  # e.g. missing credentials
-                out[spec.prefix] = {"error": f"Configuration problem: {e}"}
+                out[spec.prefix] = {"error": _clean(f"Configuration problem: {e}", settings)}
         tiers = reg.tiers
         out["server"] = {
             "name": spec.name,
             "core_version": __version__,
-            "url": settings.url,
+            "url": scrub_url(settings.url),
             "tls_verify": settings.verify_ssl or settings.ca_bundle is not None,
             "writes_enabled": settings.mcp_enable_writes,
             "dangerous_enabled": settings.mcp_enable_dangerous,

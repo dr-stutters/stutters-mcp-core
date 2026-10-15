@@ -86,3 +86,78 @@ Map caller identities to roles; each role unlocks tool tiers. Off unless `MCP_RO
   event (`role`). At HTTP startup the log lists each token name with its role.
 - `<prefix>_review_change` (two-person review) needs `rw` or `admin`, like the change it reviews.
 - Combine with two-person confirm: e.g. `MCP_TWO_PERSON_TOOLS=@dangerous` with two `admin` users.
+
+## Secrets (core 0.7.0, roadmap G4)
+
+Three ways to supply any secret setting (`<P>_PASSWORD`, `<P>_TOKEN`, product-specific `SecretStr` fields);
+set exactly one per secret:
+
+| Form | Example | Notes |
+|---|---|---|
+| `<VAR>` | `ISE_PASSWORD=...` in `.env` | Simplest; visible in `docker inspect` when passed as env. |
+| `<VAR>_FILE` | `ISE_PASSWORD_FILE=/run/secrets/ise_password` | Docker / Kubernetes secrets. One trailing newline stripped. |
+| `<VAR>_REF` | `ISE_PASSWORD_REF=file:/run/secrets/creds.json#ise_password` | Resolved by a secret loader at startup. |
+
+`MCP_AUTH_TOKENS_FILE` and `MCP_ROLES_FILE` take files directly.
+
+**Docker secrets.** `docs/templates/docker-compose.secrets.yml` is an override that mounts the appliance
+password and the token list as secrets: `docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d`.
+The files live in `secrets/` next to the compose file (mode 600, git-ignored, excluded from the build context).
+
+**Secret loaders** (`<VAR>_REF=<scheme>:<ref>`). Built in: `file:<path>#<key>` reads `<key>` from a JSON
+object or a `KEY=VALUE` file (`file:<path>` alone reads the whole file). Add others with
+`MCP_SECRET_LOADERS="scheme=package.module:Class"`; the class has a no-argument constructor and
+`load(ref: str) -> str`, runs once per secret at startup, and raises `ValueError` (without the secret in the
+message) when it can't. The module must be importable in the server's environment (install it into the
+image). Examples (not shipped; no accounts are needed to use core itself):
+
+```python
+# HashiCorp Vault (KV v2) with hvac: ISE_PASSWORD_REF=vault:secret/data/ise#password
+import os, hvac
+
+class VaultLoader:
+    def __init__(self) -> None:
+        self.client = hvac.Client(url=os.environ["VAULT_ADDR"], token=open("/run/secrets/vault_token").read().strip())
+
+    def load(self, ref: str) -> str:
+        path, _, key = ref.partition("#")
+        mount, _, rest = path.partition("/data/")
+        data = self.client.secrets.kv.v2.read_secret_version(path=rest, mount_point=mount)["data"]["data"]
+        if key not in data:
+            raise ValueError(f"{path} has no key {key!r}")
+        return str(data[key])
+```
+
+```python
+# 1Password CLI (service account; OP_SERVICE_ACCOUNT_TOKEN in the environment):
+# ISE_PASSWORD_REF=op:op://Lab/ISE admin/password
+import subprocess
+
+class OnePasswordLoader:
+    def load(self, ref: str) -> str:
+        done = subprocess.run(["op", "read", ref], capture_output=True, text=True, timeout=30)
+        if done.returncode != 0:
+            raise ValueError(f"op read failed for {ref!r} (exit {done.returncode})")
+        return done.stdout.rstrip("\n")
+```
+
+`MCP_SECRET_LOADERS` is trusted configuration (it imports code): only name modules installed in the image.
+Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loaders:OnePasswordLoader"`.
+
+**What keeps secrets out of logs and status** (checked by `tests/unit/test_secrets.py`):
+- Settings use `SecretStr`; validation errors never echo input values (`hide_input_in_errors`).
+- At startup the CLI wraps the log record factory, so every record from every logger (FastMCP's and
+  uvicorn's included) masks the configured secret values (every `SecretStr` setting, the Basic-auth base64,
+  raw `MCP_AUTH_TOKENS` entries, values passed to `register_secret`) as whole words, and credential shapes
+  (`user:pass@` in URLs, whole-word secret keys such as `password=` / `?token=` / `"secret": "..."`,
+  Authorization / Cookie / `X-*-Token` headers, `Bearer <credential>`), including tracebacks.
+- Tool errors returned to the MCP client are scrubbed the same way.
+- Limits: value masking is whole-word (so a weak password like `admin` doesn't mangle "administrator"); a
+  secret glued to other letters or digits is only caught by the shape rules. Use strong, unique credentials.
+  Tokens obtained at runtime (session cookies) are masked only if the server calls `register_secret`.
+- Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
+  shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
+- `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and
+  masks the configured secret values in error text.
+- Never logged: the HTTP startup log names tokens, not values; `<server> token` prints the raw token only
+  to the terminal that ran it.

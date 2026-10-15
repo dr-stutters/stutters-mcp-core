@@ -18,6 +18,7 @@ from fastmcp.tools import ToolResult
 
 from stutters_mcp_core.formatting import MASK, is_secret_key, mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.secrets import scrub_text
 
 audit = logging.getLogger("stutters_mcp_core.audit")
 
@@ -30,10 +31,20 @@ def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
         if is_secret_key(k) and v not in (None, ""):
             out[k] = MASK
             continue
-        v = mask_secrets(v)
+        v = _scrub_leaves(mask_secrets(v))
         text = json.dumps(v, default=str)
         out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
     return out
+
+
+def _scrub_leaves(v: Any) -> Any:
+    if isinstance(v, str):
+        return scrub_text(v)
+    if isinstance(v, dict):
+        return {k: _scrub_leaves(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_scrub_leaves(x) for x in v]
+    return v
 
 
 class AuditMiddleware(Middleware):
@@ -59,7 +70,7 @@ class AuditMiddleware(Middleware):
         try:
             result = await call_next(context)
         except Exception as e:
-            event.update(outcome="error", error_type=type(e).__name__, error=str(e)[:300])
+            event.update(outcome="error", error_type=type(e).__name__, error=scrub_text(str(e))[:300])
             raise
         else:
             event["outcome"] = "ok"
