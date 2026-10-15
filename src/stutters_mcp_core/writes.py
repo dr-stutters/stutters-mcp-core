@@ -42,7 +42,7 @@ from pydantic import Field
 from stutters_mcp_core.errors import InvalidRequest
 from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
-from stutters_mcp_core.policy import SafetyPolicy
+from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.secrets import scrub_text
 from stutters_mcp_core.targets import target_name
 
@@ -437,6 +437,16 @@ async def preview_or_apply(
         info, policy_blockers, refusals = policy.for_write(tool, tier, plan.blast_radius)
         blockers += policy_blockers
         two_person = bool(info.get("two_person"))
+    instance_settings = ctx.lifespan_context.get("settings")
+    if instance_settings is not None:
+        rules = InstanceRules.from_settings(instance_settings)
+        if rules.active:
+            label = f"instance {target!r}" if target is not None else "this appliance"
+            rule_info, rule_blockers, rule_refusals = rules.for_write(label, plan.blast_radius)
+            info = {**info, "instance_rules": rule_info}
+            blockers += rule_blockers
+            refusals += rule_refusals
+            two_person = two_person or rules.two_person
     extra: dict[str, Any] = {}
     if target is not None:
         extra["instance"] = target

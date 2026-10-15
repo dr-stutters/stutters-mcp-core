@@ -456,3 +456,71 @@ class SafetyPolicy:
         if self.two_person:
             out["two_person_tools"] = self.two_person.describe()
         return out
+
+
+# --- per-instance rules (C15) --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class InstanceRules:
+    """Write policy of one appliance instance, read with its own prefix (`<P>_READ_ONLY`,
+    `<P>_PROD_READ_ONLY`, ...). These only add restrictions to the server-wide rails."""
+
+    read_only: bool = False
+    two_person: bool = False
+    window: ChangeWindow | None = None
+    max_blast_radius: int | None = None
+
+    @classmethod
+    def from_settings(cls, settings: BaseServerSettings) -> InstanceRules:
+        spec = getattr(settings, "change_window", None)
+        return cls(
+            read_only=bool(getattr(settings, "read_only", False)),
+            two_person=bool(getattr(settings, "two_person", False)),
+            window=ChangeWindow.parse(spec) if spec else None,
+            max_blast_radius=getattr(settings, "max_blast_radius", None),
+        )
+
+    @property
+    def active(self) -> bool:
+        return (
+            self.read_only or self.two_person or self.window is not None or self.max_blast_radius is not None
+        )
+
+    def for_write(
+        self, label: str, blast_radius: int | None, now: datetime | None = None
+    ) -> tuple[dict[str, Any], list[str], list[str]]:
+        info: dict[str, Any] = {}
+        blockers: list[str] = []
+        refusals: list[str] = []
+        if self.read_only:
+            info["read_only"] = True
+            blockers.append(f"{label} is read-only (READ_ONLY=true for this instance)")
+        if self.window is not None:
+            state = self.window.state(now)
+            info["change_window"] = state
+            if not state["open"]:
+                when = f"; it next opens {state['next_open']}" if state.get("next_open") else ""
+                refusals.append(f"outside {label}'s change window ({self.window.text}){when}")
+        if self.max_blast_radius is not None:
+            info["max_blast_radius"] = self.max_blast_radius
+            if blast_radius is not None and blast_radius > self.max_blast_radius:
+                blockers.append(
+                    f"blast radius {blast_radius} exceeds {label}'s limit of {self.max_blast_radius}; "
+                    "split the change"
+                )
+        if self.two_person:
+            info["two_person"] = True
+        return info, blockers, refusals
+
+    def describe(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if self.read_only:
+            out["read_only"] = True
+        if self.two_person:
+            out["two_person"] = True
+        if self.window is not None:
+            out["change_window"] = self.window.state()
+        if self.max_blast_radius is not None:
+            out["max_blast_radius"] = self.max_blast_radius
+        return out

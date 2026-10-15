@@ -288,8 +288,19 @@ ISE_PROD_CA_BUNDLE=/certs/prod-ca.pem  # TLS checking, secrets, URL and credenti
 Every tool then takes an optional `instance` argument (an enum of the names; omitted = the default
 instance). `<prefix>_status(instance=...)` shows that instance and lists them all; `<server> check` checks
 each. A confirm token only works on the instance it was previewed on, and previews, results and audit
-events carry `instance`. Safety rails, roles and the tier switches are server-wide: run a separate
-container for an instance that needs a different write policy (e.g. read-only production).
+events carry `instance`. Roles and the tier switches are server-wide; write rules can be set per instance
+(core 0.11.0, C15), each read with that instance's prefix and never inherited:
+
+| Variable (default instance / named) | Effect |
+|---|---|
+| `ISE_READ_ONLY` / `ISE_PROD_READ_ONLY=true` | writes on that instance are blocked (preview shows why; no token) |
+| `ISE_PROD_TWO_PERSON=true` | every write on it needs a second caller to confirm (`<prefix>_review_change` is registered) |
+| `ISE_PROD_CHANGE_WINDOW="Mon-Fri 22:00-02:00 Australia/Sydney"` | confirms only inside that window (format as `MCP_CHANGE_WINDOW`) |
+| `ISE_PROD_MAX_BLAST_RADIUS=5` | blast-radius limit for that instance |
+
+They add to the server-wide `MCP_*` rails (both apply), show in previews under `policy.instance_rules`, and in
+`<prefix>_status(instance=...)` under `server.instance_rules`. They work on a single-instance server too
+(`ISE_READ_ONLY=true` makes the appliance read-only while write tools stay listed for previews).
 
 ## Long-running calls as MCP tasks (core 0.10.0, roadmap C12)
 

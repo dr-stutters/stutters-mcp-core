@@ -137,6 +137,12 @@ class BaseServerSettings(BaseSettings):
     retries: int = Field(default=2, ge=0, le=10)
     rate_limit: float | None = Field(default=None, gt=0, description="max requests per minute")
     max_concurrency: int | None = Field(default=None, ge=1)
+    # Per-appliance write rules (C15), read with the instance prefix (<P>_READ_ONLY, <P>_PROD_READ_ONLY...);
+    # they add to the server-wide MCP_* rails and are never inherited between instances.
+    read_only: bool = False
+    two_person: bool = False
+    change_window: str | None = None
+    max_blast_radius: int | None = Field(default=None, ge=0)
     # Fields a named instance never inherits from the default instance (G10), beyond URL, credentials,
     # TLS checking and secrets; products list appliance-specific ones, e.g. {"domain"} for FMC.
     per_instance_fields: ClassVar[frozenset[str]] = frozenset()
@@ -341,6 +347,19 @@ class BaseServerSettings(BaseSettings):
         if not TARGET_NAME_RE.match(self.default_instance):
             raise ValueError("DEFAULT_INSTANCE: use lowercase letters, digits and _ (start with a letter)")
         self.target_names()
+        return self
+
+    @field_validator("change_window", "max_blast_radius", mode="before")
+    @classmethod
+    def _blank_instance_rule(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @model_validator(mode="after")
+    def _instance_rules_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.policy import ChangeWindow
+
+        if self.change_window:
+            ChangeWindow.parse(self.change_window)
         return self
 
     @model_validator(mode="after")
