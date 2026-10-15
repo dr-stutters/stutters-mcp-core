@@ -33,6 +33,7 @@ from stutters_mcp_core.formatting import (  # noqa: E402
     text_result,
 )
 from stutters_mcp_core.inbound_auth import current_caller  # noqa: E402
+from stutters_mcp_core.prompts import PromptRegistrar, tool_ref  # noqa: E402
 from stutters_mcp_core.server import ServerSpec, build_server, get_client, get_settings  # noqa: E402
 from stutters_mcp_core.settings import BaseServerSettings, server_config  # noqa: E402
 from stutters_mcp_core.tasks import poll_until  # noqa: E402
@@ -53,6 +54,7 @@ __all__ = [
     "InvalidRequest",
     "NotFound",
     "Plan",
+    "PromptRegistrar",
     "RateLimited",
     "ResponseFormat",
     "ServerSpec",
@@ -78,4 +80,5 @@ __all__ = [
     "run_cli",
     "server_config",
     "text_result",
+    "tool_ref",
 ]

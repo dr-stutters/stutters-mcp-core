@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- MCP prompts (#7): `ToolRegistrar.prompt(...)` / `PromptRegistrar` register workflow prompts `<prefix>_<workflow>` with
+  `meta={"uses": [...], "tools": [...], "tier": ...}`; `tool_ref()` / `prompts.find_tool_refs()` for tool names in prompt bodies;
+  `testing.prompt_contract_problems` / `assert_prompt_contract` (naming, description, argument docs, `uses`, local tool references).
+  `<prefix>_status` lists the server's prompts.
 - `fetch_page(..., max_page=N)` overrides a pager's page size for one call (per-endpoint caps); also `fetch_all(..., max_page=)` (#10).
   The `Pager` protocol gained the optional keyword; a custom pager without it still works with `fetch_all` at runtime but should add it to satisfy mypy.
 

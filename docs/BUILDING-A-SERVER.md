@@ -160,6 +160,42 @@ Rules (enforced by `assert_tool_contract`):
 - Prefer a few task-oriented tools ("why did this auth fail") over many thin CRUD wrappers. `<prefix>_api_call` covers the rest.
 - Long jobs: `poll_until(...)` with `ctx=ctx`. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
 
+## 5a. Prompts (cross-product workflows)
+
+Workflows ship as MCP prompts in the server that **starts** them (ROADMAP "Cross-product workflow
+prompts"). Register them from the same `register(reg)` functions as tools:
+
+```python
+from stutters_mcp_core import Tier, tool_ref
+
+def register(reg: ToolRegistrar) -> None:
+    @reg.prompt(title="Troubleshoot endpoint access", uses=["ise", "catc"])
+    def ise_troubleshoot_endpoint_access(
+        mac: Annotated[str, Field(description="Endpoint MAC address, any notation")],
+        since_minutes: Annotated[int, Field(description="How far back to look")] = 60,
+    ) -> str:
+        """Why can't this endpoint get on the network? Walks ISE sessions, the failure reason and the
+        policy hit, then the switch port through Catalyst Center if that server is connected."""
+        return f"""Troubleshoot network access for {mac} over the last {since_minutes} minutes.
+1. Call {tool_ref("ise_why_auth_failed")} with mac="{mac}".
+2. Call {tool_ref("ise_endpoint_360")} for the profile, groups and the NAD/port.
+3. If the catc server is connected, run {tool_ref("catc_run_show_commands")} on that switch port.
+Every write step stays preview-first: show the preview and wait for approval."""
+```
+
+- Name `<prefix>_<workflow>`; the docstring (30–1500 chars) is the description; every argument has a
+  `Field(description=...)`. Clients send arguments as strings; FastMCP converts them to the annotated type.
+- `uses=[...]` lists every server prefix the workflow expects (yours is added if missing). It is published
+  in the prompt's `meta` (`{"uses": [...], "tools": [...], "tier": "read"}`) so clients can tell the user
+  which servers to connect.
+- Write tool names with `tool_ref("...")` (renders them in backticks). `tools=[...]` may also declare them.
+- A workflow that needs write tools takes `tier=Tier.WRITE` (or `Tier.DANGEROUS`): it is hidden when that
+  tier is off, like the tools it calls.
+- Test it with `assert_prompt_contract(server, "ise", samples={...}, known_prefixes={"cml","ise","fmc","catc"})`
+  (all tiers on). It renders every prompt and fails on unknown local tools, foreign tools whose server is
+  not in `uses`, missing argument docs, and bad names or descriptions. Checking the *other* servers' tool
+  names is the prompt test kit (C9, Next).
+
 ## 6. server.py
 
 ```python
@@ -191,10 +227,12 @@ partial. List tools get this for free: `Page.more`/`next_offset` covers APIs tha
 ## 7. Tests
 
 ```python
-from stutters_mcp_core.testing import assert_tool_contract, call_tool, live_settings
+from stutters_mcp_core.testing import assert_prompt_contract, assert_tool_contract, call_tool, live_settings
 
 async def test_contract():                       # run with writes+dangerous on so every tool is checked
-    await assert_tool_contract(create_server(settings(mcp_enable_writes=True, mcp_enable_dangerous=True)), "ise")
+    server = create_server(settings(mcp_enable_writes=True, mcp_enable_dangerous=True))
+    await assert_tool_contract(server, "ise")
+    await assert_prompt_contract(server, "ise", samples={"ise_troubleshoot_endpoint_access": {"mac": "aa:bb:cc:dd:ee:ff"}})
 ```
 
 - Unit tests mock HTTP with `respx` and call tools through `call_tool` or `fastmcp.Client`.
