@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-10-15
+
+### Fixed
+- The spec index collapses duplicate slashes in paths (Catalyst Center's spec has 12 `//dna/...` paths, which
+  `<prefix>_api_call` would then reject). Index format 4, so cached indexes rebuild.
+
 ## [0.12.2] - 2026-10-15
 
 ### Fixed
