@@ -191,6 +191,14 @@ class BaseServerSettings(BaseSettings):
     mcp_oauth_jwt_key: SecretStr | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_JWT_KEY"))
     mcp_oauth_storage_dir: Path | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_STORAGE_DIR"))
 
+    # --- inbound per-caller rate limit (C16); off by default -----------------------------------
+    mcp_caller_rate_limit: float | None = Field(
+        default=None, gt=0, validation_alias=_alias("MCP_CALLER_RATE_LIMIT")
+    )
+    mcp_caller_rate_limit_by_role: str | None = Field(
+        default=None, validation_alias=_alias("MCP_CALLER_RATE_LIMIT_BY_ROLE")
+    )
+
     # --- MCP background tasks (C12): `reg.write(..., task=True)` tools become MCP tasks -------
     mcp_tasks: bool = Field(default=False, validation_alias=_alias("MCP_TASKS"))
     mcp_tasks_url: str = Field(default="memory://", validation_alias=_alias("MCP_TASKS_URL"))
@@ -259,6 +267,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_blast_radius_overrides",
         "mcp_two_person_tools",
         "mcp_roles",
+        "mcp_caller_rate_limit_by_role",
         "mcp_oauth_provider",
         "mcp_oauth_client_id",
         "mcp_oauth_base_url",
@@ -273,7 +282,13 @@ class BaseServerSettings(BaseSettings):
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("mcp_max_blast_radius", "mcp_metrics_port", "mcp_audit_log_max_mb", mode="before")
+    @field_validator(
+        "mcp_max_blast_radius",
+        "mcp_metrics_port",
+        "mcp_audit_log_max_mb",
+        "mcp_caller_rate_limit",
+        mode="before",
+    )
     @classmethod
     def _blank_int_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
@@ -326,6 +341,13 @@ class BaseServerSettings(BaseSettings):
         if not TARGET_NAME_RE.match(self.default_instance):
             raise ValueError("DEFAULT_INSTANCE: use lowercase letters, digits and _ (start with a letter)")
         self.target_names()
+        return self
+
+    @model_validator(mode="after")
+    def _rate_limits_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.inbound_limits import parse_role_limits
+
+        parse_role_limits(self.mcp_caller_rate_limit_by_role)
         return self
 
     @model_validator(mode="after")

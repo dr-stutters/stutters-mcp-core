@@ -12,6 +12,8 @@ All notable changes to this project are documented here. The format follows
 - **Session tokens masked automatically (C14)**: `LoginTokenAuth` registers every token it obtains (header values,
   the credential after `Bearer `, secret-named `Token.data` such as refresh tokens) with the log scrubber and
   tool-error scrubbing (`secrets.register_header_values`); the newest 64 runtime values are kept.
+- **Per-caller rate limit (C16)**: `MCP_CALLER_RATE_LIMIT` (calls/min per caller) and `MCP_CALLER_RATE_LIMIT_BY_ROLE`;
+  refusals are audited (`rate_limited`) and counted (`mcp_rate_limited_total`); status is exempt. Off by default.
 
 ## [0.10.0] - 2026-10-15
 

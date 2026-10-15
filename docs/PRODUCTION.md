@@ -319,3 +319,14 @@ denials). On a long-running server, also set `MCP_AUDIT_LOG_MAX_MB=50` (rotate a
 `MCP_AUDIT_LOG_BACKUPS=5` (keep `audit.log.1` ... `audit.log.5`). Unset, the file is never rotated (as
 before). For central retention ship the file (or `MCP_AUDIT_LOG=stderr` via the container log driver) to your
 log platform; every line starts `{"ts": ..., "audit": {...}}`.
+
+## Per-caller rate limit (core 0.11.0, roadmap C16)
+
+| Variable | Example | Effect |
+|---|---|---|
+| `MCP_CALLER_RATE_LIMIT` | `60` | tool calls per minute per caller identity (bursts up to a quarter of it) |
+| `MCP_CALLER_RATE_LIMIT_BY_ROLE` | `ro=30,admin=120` | per-role values (with `MCP_ROLES`); roles not listed use `MCP_CALLER_RATE_LIMIT` (or no limit) |
+
+A refused call says how long to wait; it is audited (`rate_limited`) and counted (`mcp_rate_limited_total`).
+`<prefix>_status` is never limited. This stops one runaway client or leaked token from monopolising the
+appliance; `<P>_RATE_LIMIT` still paces the server's own requests to the appliance.
