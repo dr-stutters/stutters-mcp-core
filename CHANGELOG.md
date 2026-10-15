@@ -6,11 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-15
+
 ### Added
+- **MCP background tasks (C12)**, opt-in: `reg.read/write/dangerous(..., task=True)` marks long-running tools; with
+  `MCP_TASKS=true` (and the `stutters-mcp-core[tasks]` extra, i.e. fastmcp-tasks) they run as SEP-2663 tasks on a
+  Docket backend (`MCP_TASKS_URL`, default `memory://`). Clients without task support call them synchronously.
+  Caller identity, previews/confirm tokens and `instance` work inside tasks; status lists `server.tasks`.
 - **Public-release groundwork (G9)**: `SECURITY.md`, `CONTRIBUTING.md`, `docs/PUBLIC-RELEASE.md` (history-scrub
   decisions, repo hygiene, PyPI trusted-publishing steps, visibility last) and `python -m stutters_mcp_core.scrub_check`
   (report-only scan of git history or the current tree for lab addresses/host names, secrets, keys, tokens and
   forbidden files; `--strict` for CI, `--allow` for known-safe values, `--json`).
+
+### Adopting (server builders)
+- Bump to `tag = "v0.10.0"`. To offer tasks: depend on `stutters-mcp-core[tasks]` (git source unchanged), add
+  `task=True` to deploy/discovery/provision/SWIM-style tools (async functions), and keep using `poll_until` inside
+  them (progress reaches the task). Nothing changes until an operator sets `MCP_TASKS=true`.
+- Before going public, run `uv run python -m stutters_mcp_core.scrub_check` in your repo (report only) and see
+  docs/PUBLIC-RELEASE.md; copy SECURITY.md / CONTRIBUTING.md and adjust the product scope.
 
 ## [0.9.0] - 2026-10-15
 

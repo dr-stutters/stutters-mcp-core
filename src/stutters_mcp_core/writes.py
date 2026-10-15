@@ -23,7 +23,9 @@ call with identical args and that token applies it, after re-checking that the t
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import secrets
@@ -116,6 +118,9 @@ class ToolRegistrar:
         self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
         self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
         self.target_names: list[str] = settings.target_names()  # >1: tools get an `instance` argument
+        task_tools: set[str] = getattr(mcp, "_stutters_task_tools", set())
+        mcp._stutters_task_tools = task_tools  # type: ignore[attr-defined]
+        self.task_tools = task_tools  # tools registered as MCP background tasks (MCP_TASKS)
 
     def _register(
         self,
@@ -127,6 +132,7 @@ class ToolRegistrar:
         idempotent: bool | None,
         tags: set[str] | None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         def deco(fn: F) -> F:
             tool_name = name or fn.__name__
@@ -137,11 +143,32 @@ class ToolRegistrar:
             if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
                 self.withheld[tool_name] = tier
                 return fn
+            if task and not inspect.iscoroutinefunction(fn):
+                raise ValueError(
+                    f"{tool_name}: task=True needs an async function (background tasks run async)"
+                )
             registered: Callable[..., Any] = fn
             if len(self.target_names) > 1:
                 from stutters_mcp_core.targets import with_target_argument
 
                 registered = with_target_argument(fn, self.target_names, self.target_names[0])
+            extra: dict[str, Any] = {}
+            if task and getattr(self.settings, "mcp_tasks", False):
+                # MCP background task (C12): clients that support tasks get a task handle and poll;
+                # others run the call synchronously as before.
+                from fastmcp.utilities.tasks import TaskConfig
+
+                from stutters_mcp_core.secrets import SecretErrorMiddleware
+                from stutters_mcp_core.targets import with_task_guard
+
+                scrubber = SecretErrorMiddleware(self.settings)
+                registered = with_task_guard(
+                    registered,
+                    server_has_auth=lambda: self.mcp.auth is not None,
+                    scrub=scrubber.scrub,
+                )
+                extra["task"] = TaskConfig(mode="optional")
+                self.task_tools.add(tool_name)
             self.mcp.tool(
                 registered,
                 name=tool_name,
@@ -150,6 +177,7 @@ class ToolRegistrar:
                     tier, title=title, destructive=destructive, idempotent=idempotent
                 ),
                 tags={tier.value, *(tags or set())},
+                **extra,
             )
             self.tiers[tool_name] = tier
             return fn
@@ -164,6 +192,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.READ,
@@ -173,6 +202,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
     def write(
@@ -184,6 +214,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.WRITE,
@@ -193,6 +224,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
     def prompt(
@@ -229,6 +261,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.DANGEROUS,
@@ -238,6 +271,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
 
@@ -480,6 +514,10 @@ async def preview_or_apply(
         extra["approved_by"] = caller
     try:
         result = await apply()
+    except asyncio.CancelledError:
+        # e.g. tasks/cancel on a background task mid-apply: the change may be partly done upstream.
+        _emit(ctx, "apply_cancelled", tool, caller, plan.summary, **extra)
+        raise
     except Exception as e:
         _emit(ctx, "apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         raise
