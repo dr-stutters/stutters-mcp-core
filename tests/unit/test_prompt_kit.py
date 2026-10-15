@@ -169,7 +169,6 @@ def test_password_file_from_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("DEMO_PASSWORD_FILE", str(secret))
     s = DemoSettings(_env_file=None)  # type: ignore[call-arg]
     assert s.password_value() == "s3cret" and "s3cret" not in repr(s)
-    assert DemoSettings(_env_file=None, password="init-wins").password_value() == "init-wins"  # type: ignore[call-arg,arg-type]
 
     monkeypatch.setenv("DEMO_PASSWORD", "plain")
     with pytest.raises(ValueError, match="set DEMO_PASSWORD or DEMO_PASSWORD_FILE, not both"):
@@ -246,3 +245,10 @@ async def test_prompt_example_is_used_by_kit_and_manifest(tmp_path: Path) -> Non
         "references": [],
         "rendered": False,
     }
+
+
+def test_init_value_skips_secret_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_URL", "https://demo.test")
+    monkeypatch.setenv("DEMO_PASSWORD_FILE", str(tmp_path / "missing"))
+    s = DemoSettings(_env_file=None, password="given")  # type: ignore[call-arg,arg-type]
+    assert s.password_value() == "given"

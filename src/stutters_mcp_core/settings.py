@@ -54,9 +54,10 @@ class SecretFileSource(PydanticBaseSettingsSource):
     .env file; setting both <VAR> and <VAR>_FILE is an error. Fields that already have a `<name>_file`
     setting (MCP_AUTH_TOKENS_FILE) are left to it."""
 
-    def __init__(self, settings_cls: type[BaseSettings], env_file: Any) -> None:
+    def __init__(self, settings_cls: type[BaseSettings], env_file: Any, given: Any = ()) -> None:
         super().__init__(settings_cls)
         self.env_file = env_file
+        self.given = set(given)  # passed to the constructor: those win, their _FILE is not read
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:  # pragma: no cover
         return None, field_name, False  # unused: __call__ does the work
@@ -77,7 +78,9 @@ class SecretFileSource(PydanticBaseSettingsSource):
     def __call__(self) -> dict[str, Any]:
         fields = self.settings_cls.model_fields
         secret_fields = [
-            n for n, f in fields.items() if _is_secret(f.annotation) and f"{n}_file" not in fields
+            n
+            for n, f in fields.items()
+            if _is_secret(f.annotation) and f"{n}_file" not in fields and n not in self.given
         ]
         if not secret_fields:
             return {}
@@ -101,7 +104,7 @@ class SecretFileSource(PydanticBaseSettingsSource):
                 text = Path(path).expanduser().read_text()
             except OSError as e:
                 raise ValueError(f"{file_var}: cannot read {path}: {e.strerror or e}") from None
-            out[name] = text.removesuffix("\n").removesuffix("\r")
+            out[name] = text.removesuffix("\n")  # read_text() already turned CRLF into LF
         return out
 
 
@@ -187,7 +190,8 @@ class BaseServerSettings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         # init > env > <VAR>_FILE > .env > secrets_dir
-        secret_files = SecretFileSource(settings_cls, getattr(dotenv_settings, "env_file", None))
+        given = getattr(init_settings, "init_kwargs", {}) or {}
+        secret_files = SecretFileSource(settings_cls, getattr(dotenv_settings, "env_file", None), given)
         return init_settings, env_settings, secret_files, dotenv_settings, file_secret_settings
 
     # --- helpers -------------------------------------------------------------------------

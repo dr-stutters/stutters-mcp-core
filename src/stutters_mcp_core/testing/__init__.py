@@ -331,7 +331,7 @@ async def inbound_reference_problems(
     """The reverse check: prompts in *other* servers' manifests that reference a `<prefix>_*` tool or
     prompt this server does not register (build it with all tiers on). Catches renaming or removing a
     tool another server's workflow depends on."""
-    local = set((await build_manifest(mcp, server=prefix, prefix=prefix))["tools"])
+    local = {t.name for t in await mcp.list_tools(run_middleware=False)}
     local |= {p.name for p in await mcp.list_prompts(run_middleware=False)}
     problems: list[str] = []
     for m in manifests:

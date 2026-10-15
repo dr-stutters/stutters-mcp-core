@@ -110,13 +110,16 @@ def _tools_command(
             lines.append("prompts:")
             lines += [
                 f"  {meta['tier']:<9} {name}  uses={','.join(meta['uses'])}"
+                + ("" if meta["rendered"] else "  (did not render: register example=...)")
                 for name, meta in manifest["prompts"].items()
             ]
         text = "\n".join(lines) + "\n"
     if args.out:
         from pathlib import Path
 
-        Path(args.out).write_text(text)
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text)
         print(f"wrote {args.out} ({len(manifest['tools'])} tools, {len(manifest['prompts'])} prompts)")
     else:
         sys.stdout.write(text)

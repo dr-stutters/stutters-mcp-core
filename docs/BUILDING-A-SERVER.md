@@ -86,7 +86,8 @@ _RATE_LIMIT, _MAX_CONCURRENCY` plus `MCP_TRANSPORT/HOST/PORT/PATH/AUTH_TOKENS(_F
 Every secret setting (any `SecretStr` field, yours too) can also come from a file: `<VAR>_FILE`, e.g.
 `ISE_PASSWORD_FILE=/run/secrets/ise_password` (Docker/Kubernetes secrets; one trailing newline is
 stripped). Setting both `<VAR>` and `<VAR>_FILE` is a configuration error. `MCP_AUTH_TOKENS_FILE` keeps
-its own semantics (appended to `MCP_AUTH_TOKENS`).
+its own semantics (appended to `MCP_AUTH_TOKENS`). Values passed to the constructor win and skip the file.
+If your Settings overrides `settings_customise_sources`, call `super()` or `_FILE` support is lost.
 
 ## 4. client.py: the "app" object
 
@@ -231,7 +232,7 @@ async def test_prompt_snapshots():                   # rendered text, title, des
     await assert_prompt_snapshots(server_rw, "tests/snapshots/prompts", samples=SAMPLES)
 ```
 
-Snapshots live in `<dir>/<prompt>.md`. A missing one is written and the test fails until it is committed;
+Snapshots live in `<dir>/<prompt>.md`. A missing one is written (even in CI) and the test fails until it is committed;
 a changed one fails with a unified diff. `UPDATE_PROMPT_SNAPSHOTS=1 uv run pytest` accepts changes and
 deletes snapshots for removed prompts. Use one directory per configuration (e.g. `prompts-ro`,
 `prompts-rw`) when the text depends on the enabled tiers. `external_tools` also accepts a hand-written
