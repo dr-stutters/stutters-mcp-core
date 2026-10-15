@@ -338,3 +338,21 @@ def test_index_collapses_duplicate_slashes() -> None:
     idx = build_index(doc)
     assert idx.operations[0].path == "/dna/intent/api/v1/x"
     assert idx.definition("GET /dna/intent/api/v1/x")["operations"]
+
+
+def test_field_changes_replace_reports_removed_keys() -> None:
+    cur = {
+        "name": "r1",
+        "sourceNetworks": {"literals": [{"value": "10.1.1.0/24"}], "objects": [{"name": "A"}]},
+    }
+    new = {"name": "r1", "sourceNetworks": {"objects": [{"name": "B"}]}}
+    assert field_changes(cur, new) == {
+        "sourceNetworks.objects": {"from": [{"name": "A"}], "to": [{"name": "B"}]}
+    }
+    full = field_changes(cur, new, replace=True)
+    assert full["sourceNetworks.literals"] == {
+        "from": [{"value": "10.1.1.0/24"}],
+        "to": None,
+        "removed": True,
+    }
+    assert "sourceNetworks.objects" in full

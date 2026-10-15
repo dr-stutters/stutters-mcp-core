@@ -580,15 +580,25 @@ def dumps_event(event: str, tool: str, caller: str, summary: str, **extra: Any) 
 # --- diff helpers -------------------------------------------------------------------------
 
 
-def field_changes(current: dict[str, Any], desired: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def field_changes(
+    current: dict[str, Any], desired: dict[str, Any], *, replace: bool = False
+) -> dict[str, dict[str, Any]]:
     """{field: {"from": old, "to": new}} for each field in `desired` whose value differs.
-    Nested dicts are compared recursively and reported with dotted keys."""
+    Nested dicts are compared recursively and reported with dotted keys.
+
+    With `replace=True` (the update sends the whole object, e.g. PUT), keys present in `current` but
+    missing from `desired` are reported too, as {"from": old, "to": None, "removed": True}, so a
+    preview never hides what the change deletes."""
     changes: dict[str, dict[str, Any]] = {}
 
     def walk(cur: Any, new: Any, prefix: str) -> None:
         if isinstance(new, dict) and isinstance(cur, dict):
             for k, v in new.items():
                 walk(cur.get(k), v, f"{prefix}{k}.")
+            if replace:
+                for k in cur.keys() - new.keys():
+                    if cur[k] not in (None, "", [], {}):
+                        changes[f"{prefix}{k}"] = {"from": cur[k], "to": None, "removed": True}
             return
         if cur != new:
             changes[prefix.rstrip(".")] = {"from": cur, "to": new}

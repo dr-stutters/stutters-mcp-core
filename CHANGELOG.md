@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-10-15
+
+### Added
+- `field_changes(current, desired, replace=True)` also reports keys the update removes (`"removed": true`), for
+  tools that send whole objects (PUT). Default behaviour is unchanged. FMC request: a rule-update preview hid a
+  network literal that the replacement dropped.
+
+### Adopting
+- Write tools that PUT a full object should pass `replace=True` when building the preview diff.
+
 ## [0.12.3] - 2026-10-15
 
 ### Fixed
