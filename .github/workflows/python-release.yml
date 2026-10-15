@@ -11,6 +11,17 @@ on:
       publish-pypi:
         type: boolean
         default: false   # ADR-001: git tags for now
+      scan-severity:
+        type: string
+        default: "CRITICAL,HIGH"
+        description: Trivy severities that fail the release (after the image is pushed; see docs/SUPPLY-CHAIN.md).
+      scan-fail:
+        type: boolean
+        default: true
+        description: Fail the workflow when Trivy finds fixable vulnerabilities at scan-severity.
+      sign:
+        type: boolean
+        default: false   # cosign signing is ready but off until the key decision (docs/SUPPLY-CHAIN.md)
     secrets:
       CORE_READ_TOKEN:
         required: false
@@ -48,14 +59,54 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
+      - name: Python SBOM (CycloneDX, from uv.lock)
+        run: |
+          uv export --no-dev --no-emit-project --no-emit-package stutters-mcp-core --frozen -q -o "$RUNNER_TEMP/requirements.txt"
+          uvx --from cyclonedx-bom==7.1.0 cyclonedx-py requirements "$RUNNER_TEMP/requirements.txt" \
+            --output-format JSON --output-file "dist/${GITHUB_REPOSITORY#*/}-${GITHUB_REF_NAME}.python.cdx.json"
+          gh release upload "${GITHUB_REF_NAME}" dist/*.cdx.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Image name
+        if: inputs.image
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
       - name: Build and push image
         if: inputs.image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          provenance: mode=max
+          sbom: true
           secrets: |
             core_read_token=${{ secrets.CORE_READ_TOKEN }}
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            ${{ steps.img.outputs.name }}:${{ github.ref_name }}
+            ${{ steps.img.outputs.name }}:latest
+      - name: Image SBOM (SPDX, syft)
+        if: inputs.image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: image.spdx.json
+          upload-release-assets: true
+      - name: Image scan (Trivy)
+        if: inputs.image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
+          severity: ${{ inputs.scan-severity }}
+          ignore-unfixed: true
+          exit-code: ${{ inputs.scan-fail && '1' || '0' }}
+          format: table
+      - name: Install cosign
+        if: inputs.image && inputs.sign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign image (cosign, keyless via GitHub OIDC)
+        if: inputs.image && inputs.sign
+        env:
+          COSIGN_YES: "true"
+        run: cosign sign "${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}"
