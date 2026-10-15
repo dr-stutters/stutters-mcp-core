@@ -104,8 +104,17 @@ jobs:
         with:
           image: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
           format: spdx-json
-          output-file: image.spdx.json
-          upload-release-assets: true
+          output-file: ${{ runner.temp }}/image.spdx.json
+          # The action's own artifact/release uploads need `actions: read`, which callers don't grant.
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attach image SBOM to the release
+        if: inputs.image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "$RUNNER_TEMP/image.spdx.json" "$RUNNER_TEMP/${GITHUB_REPOSITORY#*/}-${GITHUB_REF_NAME}.image.spdx.json"
+          gh release upload "${GITHUB_REF_NAME}" "$RUNNER_TEMP/${GITHUB_REPOSITORY#*/}-${GITHUB_REF_NAME}.image.spdx.json" --clobber
       - name: Image scan (Trivy)
         if: inputs.image
         uses: aquasecurity/trivy-action@v0.36.0
