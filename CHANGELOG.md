@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-15
+
+### Added
+- **Per-instance write rules (C15)**: `<P>_READ_ONLY`, `<P>_TWO_PERSON`, `<P>_CHANGE_WINDOW`, `<P>_MAX_BLAST_RADIUS`
+  (and `<P>_<NAME>_...` per named instance, never inherited) add to the server-wide rails in `preview_or_apply`;
+  shown under `policy.instance_rules` and `server.instance_rules`. E.g. read-only or two-person production next to
+  an unrestricted lab in one server.
+- **Audit log rotation (C13)**: `MCP_AUDIT_LOG_MAX_MB` + `MCP_AUDIT_LOG_BACKUPS` rotate a file audit log
+  (`configure_audit_log(path, max_mb=, backups=)`); unset = unchanged.
+- **Session tokens masked automatically (C14)**: `LoginTokenAuth` registers every token it obtains (header values,
+  the credential after `Bearer `, secret-named `Token.data` such as refresh tokens) with the log scrubber and
+  tool-error scrubbing (`secrets.register_header_values`; credential headers only: Authorization, Cookie, `*Token*`
+  and secret-named headers); the newest 64 runtime values are kept. `SecretScrubber.values` is now a read-only
+  snapshot (`frozenset`); register values with `add` / `add_runtime`.
+- **Per-caller rate limit (C16)**: `MCP_CALLER_RATE_LIMIT` (calls/min per caller) and `MCP_CALLER_RATE_LIMIT_BY_ROLE`;
+  refusals are audited (`rate_limited`) and counted (`mcp_rate_limited_total`); status is exempt. Off by default.
+
+### Adopting (server builders)
+- Bump to `tag = "v0.11.0"`; no code changes. New product-prefixed settings `READ_ONLY`, `TWO_PERSON`,
+  `CHANGE_WINDOW`, `MAX_BLAST_RADIUS` exist on every Settings class: don't define fields with those names.
+- Hosted containers: consider `MCP_AUDIT_LOG_MAX_MB` if the audit log goes to a file, and `MCP_CALLER_RATE_LIMIT`.
+- If your server obtains session tokens outside `LoginTokenAuth`, call `secrets.register_secret(token)`.
+
 ## [0.10.0] - 2026-10-15
 
 ### Added

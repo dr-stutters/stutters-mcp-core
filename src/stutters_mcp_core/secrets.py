@@ -25,6 +25,7 @@ import importlib
 import json
 import logging
 import re
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -133,13 +134,40 @@ def secret_values(settings: Any) -> list[str]:
 class SecretScrubber:
     """Masks the configured secret values and credential shapes in text and in log records."""
 
+    RUNTIME_KEEP = 64  # session tokens rotate; remember the most recent ones only
+
     def __init__(self, values: Iterable[str] = ()) -> None:
-        self.values: set[str] = set()
+        from collections import deque
+
+        self._lock = threading.Lock()  # the log-record factory runs on any thread
+        self.configured: set[str] = set()
+        self.runtime: deque[str] = deque(maxlen=self.RUNTIME_KEEP)
         self.add(values)
 
+    @property
+    def values(self) -> frozenset[str]:
+        """A snapshot of every value masked (read-only: use add / add_runtime to register more)."""
+        with self._lock:
+            return frozenset(self.configured) | frozenset(self.runtime)
+
     def add(self, values: Iterable[str]) -> None:
-        """Register more values to mask, e.g. a session token obtained at runtime."""
-        self.values.update(v for v in values if v and len(v) >= MIN_SECRET_LEN)
+        """Register configured secret values to mask (kept for the life of the process)."""
+        new = [v for v in values if v and len(v) >= MIN_SECRET_LEN]
+        with self._lock:
+            self.configured.update(new)
+
+    def add_runtime(self, value: str) -> None:
+        """Register a value obtained at runtime (session token, cookie); the newest RUNTIME_KEEP are kept."""
+        if not value or len(value) < MIN_SECRET_LEN:
+            return
+        with self._lock:
+            if value not in self.runtime and value not in self.configured:
+                self.runtime.append(value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self.configured.clear()
+            self.runtime.clear()
 
     def text(self, text: str) -> str:
         return scrub_text(mask_values(text, self.values))
@@ -235,13 +263,36 @@ def install_secret_filter(settings: Any, loggers: Iterable[logging.Logger] = ())
 def reset_secret_filter() -> None:
     """Forget the values registered with the installed scrubber (tests); the factory stays installed."""
     if _installed is not None:
-        _installed.values.clear()
+        _installed.clear()
 
 
 def register_secret(value: str) -> None:
-    """Mask a value obtained at runtime (a session token, a cookie) in all later log records."""
+    """Mask a value obtained at runtime (a session token, a cookie) in later log records and tool errors.
+    Core's LoginTokenAuth calls this for every token it obtains; servers only need it for credentials they
+    handle outside the core auth strategies."""
     if _installed is not None:
-        _installed.add([value])
+        _installed.add_runtime(value)
+
+
+CREDENTIAL_HEADERS = frozenset({"authorization", "proxy-authorization", "cookie", "set-cookie"})
+
+
+def register_header_values(headers: dict[str, str]) -> None:
+    """register_secret for each credential header value (Authorization, Cookie, and names that look like
+    secrets: X-Auth-Token, X-Auth-Access-Token...), plus the credential after a `Bearer `-style scheme.
+    Other headers (Accept, a domain id) are left alone so they don't get masked everywhere."""
+    from stutters_mcp_core.formatting import is_secret_key
+
+    for name, value in headers.items():
+        if not isinstance(value, str):
+            continue
+        lowered = name.lower()
+        if lowered not in CREDENTIAL_HEADERS and not is_secret_key(name) and "token" not in lowered:
+            continue
+        register_secret(value)
+        scheme, _, rest = value.partition(" ")
+        if rest and scheme.isalpha():
+            register_secret(rest.strip())
 
 
 def scrub_error(text: str, settings: Any = None) -> str:

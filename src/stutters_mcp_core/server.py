@@ -35,7 +35,7 @@ from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
 from stutters_mcp_core.inbound_auth import current_caller
-from stutters_mcp_core.policy import SafetyPolicy
+from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.roles import RoleMiddleware
 from stutters_mcp_core.secrets import SecretErrorMiddleware, scrub_error, scrub_url
@@ -180,6 +180,18 @@ def build_server(
         auth=auth,
         middleware=[AuditMiddleware(spec.name, roles)],
     )
+    if settings.mcp_caller_rate_limit is not None or settings.mcp_caller_rate_limit_by_role:
+        from stutters_mcp_core.inbound_limits import CallerRateLimitMiddleware, parse_role_limits
+
+        mcp.add_middleware(
+            CallerRateLimitMiddleware(
+                spec.name,
+                spec.prefix,
+                settings.mcp_caller_rate_limit,
+                parse_role_limits(settings.mcp_caller_rate_limit_by_role),
+                roles,
+            )
+        )
     mcp.add_middleware(SecretErrorMiddleware(settings))
     if roles is not None:
         mcp.add_middleware(RoleMiddleware(roles, mcp))
@@ -200,7 +212,8 @@ def build_server(
     mcp._stutters_policy = policy  # type: ignore[attr-defined]
     reg = ToolRegistrar(mcp, settings, spec.prefix)
     _register_status(reg, spec, settings, status)
-    if policy.two_person and settings.mcp_enable_writes:
+    instance_two_person = any(InstanceRules.from_settings(c).two_person for c in configs.values())
+    if (policy.two_person or instance_two_person) and settings.mcp_enable_writes:
         _register_review(reg, spec)
     for fn in register:
         fn(reg)
@@ -314,6 +327,9 @@ def _register_status(
         roles = ctx.lifespan_context.get("roles")
         if roles is not None:
             out["server"]["access"] = roles.describe(current_caller())
+        rules = InstanceRules.from_settings(target_cfg)
+        if rules.active:
+            out["server"]["instance_rules"] = rules.describe()
         if reg.task_tools:
             backend = settings.mcp_tasks_url.split("://", 1)[0]
             out["server"]["tasks"] = {"backend": backend, "tools": sorted(reg.task_tools)}

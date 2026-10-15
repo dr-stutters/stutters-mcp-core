@@ -51,7 +51,9 @@ def _configure_logging(settings: BaseServerSettings, package: str) -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger(package).setLevel(settings.log_level.upper())
-    configure_audit_log(settings.mcp_audit_log)
+    configure_audit_log(
+        settings.mcp_audit_log, max_mb=settings.mcp_audit_log_max_mb, backups=settings.mcp_audit_log_backups
+    )
     # Last line of defence: mask every configured secret value in anything that reaches a handler.
     install_secret_filter(settings, [logging.getLogger("stutters_mcp_core.audit")])
 
