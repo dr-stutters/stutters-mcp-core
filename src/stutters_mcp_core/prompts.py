@@ -28,6 +28,7 @@ Rules (checked by `testing.prompt_contract_problems`):
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -69,6 +70,61 @@ def find_tool_refs(text: str, prefixes: Iterable[str]) -> list[str]:
     return list(seen)
 
 
+AUTO_ARG_DOC = "Provide a value matching the following JSON schema"
+_TYPE_SAMPLES = {"integer": "1", "number": "1", "boolean": "true", "array": "[]", "object": "{}"}
+_SCHEMA_RE = re.compile(r"JSON schema: (\{.*\})\. Encode", re.DOTALL)
+
+
+def sample_value(description: str | None) -> str:
+    """A placeholder FastMCP can convert to the argument's type, read from the JSON schema FastMCP
+    appends to non-string argument descriptions."""
+    m = _SCHEMA_RE.search(description or "")
+    if not m:
+        return "example"
+    try:
+        schema = json.loads(m.group(1))
+    except ValueError:
+        return "example"
+    return _schema_sample(schema)
+
+
+def _schema_sample(schema: dict[str, Any]) -> str:
+    for key in ("anyOf", "oneOf"):  # Optional[int] etc.: the first non-null branch
+        branches = [b for b in schema.get(key) or [] if isinstance(b, dict) and b.get("type") != "null"]
+        if branches:
+            return _schema_sample(branches[0])
+    if schema.get("enum"):
+        first = schema["enum"][0]
+        return first if isinstance(first, str) else json.dumps(first)
+    if "default" in schema and schema["default"] is not None:
+        d = schema["default"]
+        return d if isinstance(d, str) else json.dumps(d)
+    if schema.get("type") in ("integer", "number") and isinstance(schema.get("minimum"), int | float):
+        return json.dumps(schema["minimum"])
+    return _TYPE_SAMPLES.get(str(schema.get("type")), "example")
+
+
+def render_args(
+    arguments: Iterable[Any], given: dict[str, str] | None = None, example: dict[str, str] | None = None
+) -> dict[str, str]:
+    """String arguments for rendering a prompt: `given` values, then the prompt's registered `example`,
+    then a placeholder for every other argument (optional ones too, so bodies that only break with them
+    are caught). `arguments` are MCP PromptArguments (name + description)."""
+    given = {**(example or {}), **(given or {})}
+    out = {a.name: given.get(a.name, sample_value(a.description)) for a in arguments}
+    out.update(given)
+    return out
+
+
+def rendered_text(result: Any) -> str:
+    """The text of every message in a rendered prompt, joined by newlines."""
+    parts: list[str] = []
+    for msg in getattr(result, "messages", []):
+        content = getattr(msg, "content", None)
+        parts.append(getattr(content, "text", "") or "")
+    return "\n".join(parts)
+
+
 def _check_uses(prefix: str, uses: Iterable[str] | None) -> list[str]:
     out = list(dict.fromkeys(uses or [prefix]))
     for p in out:
@@ -90,7 +146,8 @@ def registered_prompts(mcp: FastMCP[Any]) -> dict[str, dict[str, Any]]:
 
 class PromptRegistrar:
     """Registers workflow prompts named `<prefix>_<workflow>` with metadata the contract linter and
-    clients can read: `meta={"uses": [...prefixes], "tools": [...declared tool names], "tier": ...}`."""
+    clients can read: `meta={"uses": [...prefixes], "tools": [...declared tool names], "tier": ...}`
+    (plus `"example": {...}` when given)."""
 
     def __init__(self, mcp: FastMCP[Any], settings: BaseServerSettings | None, prefix: str) -> None:
         self.mcp = mcp
@@ -108,11 +165,18 @@ class PromptRegistrar:
         tools: Iterable[str] = (),
         tier: Tier = Tier.READ,
         tags: set[str] | None = None,
+        example: dict[str, str] | None = None,
     ) -> Callable[[F], F]:
         """Decorator. `uses`: server prefixes the workflow expects (this server's is added if missing).
         `tools`: tool names the body references (optional; the linter also scans the rendered body).
-        `tier`: the highest tool tier the workflow needs; the prompt is hidden when it's disabled."""
+        `tier`: the highest tool tier the workflow needs; the prompt is hidden when it's disabled.
+        `example`: valid string arguments ({"mac": "AA:BB:CC:DD:EE:FF"}) the prompt test kit and
+        `<server> tools --json` render it with when a test passes no `samples` for it."""
         uses_list = _check_uses(self.prefix, uses)
+        if example is not None and not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in example.items()
+        ):
+            raise ValueError("example: argument values must be strings, as a client sends them")
         tool_list = list(dict.fromkeys(tools))
         for t in tool_list:
             tool_ref(t)  # validates the shape
@@ -125,7 +189,9 @@ class PromptRegistrar:
                 raise ValueError(f"Prompt {prompt_name!r} is registered twice")
             if self.settings is not None and not tier_enabled(self.settings, tier):
                 return fn
-            meta = {"uses": uses_list, "tools": tool_list, "tier": tier.value}
+            meta: dict[str, Any] = {"uses": uses_list, "tools": tool_list, "tier": tier.value}
+            if example:
+                meta["example"] = dict(example)
             self.mcp.prompt(
                 fn,
                 name=prompt_name,

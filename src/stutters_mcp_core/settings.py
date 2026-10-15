@@ -13,11 +13,13 @@ LOG_LEVEL, ...) and are therefore the same for every product.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +33,76 @@ def server_config(env_prefix: str) -> SettingsConfigDict:
         extra="ignore",
         populate_by_name=True,
     )
+
+
+def _is_secret(annotation: Any) -> bool:
+    return annotation is SecretStr or SecretStr in get_args(annotation)
+
+
+def _env_var(field_name: str, info: FieldInfo, env_prefix: str) -> str:
+    alias = info.validation_alias
+    if isinstance(alias, AliasChoices) and isinstance(alias.choices[0], str):
+        return alias.choices[0].upper()
+    if isinstance(alias, str):
+        return alias.upper()
+    return f"{env_prefix}{field_name}".upper()
+
+
+class SecretFileSource(PydanticBaseSettingsSource):
+    """`<VAR>_FILE` for every SecretStr setting (Docker/Kubernetes secrets): ISE_PASSWORD_FILE=/run/secrets/x
+    reads the password from that file (one trailing newline stripped). Looked up in the environment and the
+    .env file; setting both <VAR> and <VAR>_FILE is an error. Fields that already have a `<name>_file`
+    setting (MCP_AUTH_TOKENS_FILE) are left to it."""
+
+    def __init__(self, settings_cls: type[BaseSettings], env_file: Any) -> None:
+        super().__init__(settings_cls)
+        self.env_file = env_file
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:  # pragma: no cover
+        return None, field_name, False  # unused: __call__ does the work
+
+    def _dotenv(self) -> dict[str, str]:
+        files = self.env_file if isinstance(self.env_file, list | tuple) else [self.env_file]
+        out: dict[str, str] = {}
+        for f in files:
+            if f is None or not Path(f).expanduser().is_file():
+                continue
+            from dotenv import dotenv_values
+
+            out.update(
+                {k.upper(): v for k, v in dotenv_values(Path(f).expanduser()).items() if v is not None}
+            )
+        return out
+
+    def __call__(self) -> dict[str, Any]:
+        fields = self.settings_cls.model_fields
+        secret_fields = [
+            n for n, f in fields.items() if _is_secret(f.annotation) and f"{n}_file" not in fields
+        ]
+        if not secret_fields:
+            return {}
+        env = {k.upper(): v for k, v in os.environ.items()}
+        dotenv: dict[str, str] | None = None
+        prefix = str(self.settings_cls.model_config.get("env_prefix", ""))
+        out: dict[str, Any] = {}
+        for name in secret_fields:
+            var = _env_var(name, fields[name], prefix)
+            file_var = var + "_FILE"
+            path = env.get(file_var)
+            if path is None:
+                dotenv = self._dotenv() if dotenv is None else dotenv
+                path = dotenv.get(file_var)
+            if not path:
+                continue
+            dotenv = self._dotenv() if dotenv is None else dotenv
+            if env.get(var) or dotenv.get(var):
+                raise ValueError(f"set {var} or {file_var}, not both")
+            try:
+                text = Path(path).expanduser().read_text()
+            except OSError as e:
+                raise ValueError(f"{file_var}: cannot read {path}: {e.strerror or e}") from None
+            out[name] = text.removesuffix("\n").removesuffix("\r")
+        return out
 
 
 def _alias(name: str) -> Any:
@@ -104,6 +176,19 @@ class BaseServerSettings(BaseSettings):
         if self.mcp_enable_dangerous and not self.mcp_enable_writes:
             raise ValueError("MCP_ENABLE_DANGEROUS=true also requires MCP_ENABLE_WRITES=true")
         return self
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # init > env > <VAR>_FILE > .env > secrets_dir
+        secret_files = SecretFileSource(settings_cls, getattr(dotenv_settings, "env_file", None))
+        return init_settings, env_settings, secret_files, dotenv_settings, file_secret_settings
 
     # --- helpers -------------------------------------------------------------------------
 
