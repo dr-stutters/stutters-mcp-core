@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-15
+
+Roadmap "Now" (C2–C5). Backwards compatible with 0.1.x: servers that pass no `event_sources` and
+register no prompts see no change, and every new setting is off by default.
+
 ### Added
 - Event framework v1 (#8, ADR-003): `stutters_mcp_core.events` with `Event`, `EventBuffer` (bounded ring buffer,
   never-reused `seq`, per-source stats, `(source, id)` dedupe, filters by source/type prefix/key/severity/time/text,
@@ -24,6 +29,11 @@ All notable changes to this project are documented here. The format follows
   `<prefix>_status` lists the server's prompts.
 - `fetch_page(..., max_page=N)` overrides a pager's page size for one call (per-endpoint caps); also `fetch_all(..., max_page=)` (#10).
   The `Pager` protocol gained the optional keyword; a custom pager without it still works with `fetch_all` at runtime but should add it to satisfy mypy.
+- docs: ADR-003 (events, receivers, prompts), BUILDING-A-SERVER §5a prompts and §5b events.
+
+### Changed
+- `<prefix>_status` reports `server.prompts` and `server.events` when present.
+- Test lint config ignores E501/ASYNC109 under `tests/`.
 
 ## [0.1.2] - 2026-10-15
 
