@@ -195,6 +195,8 @@ def build_server(
         """Liveness for Docker/load balancers. Unauthenticated, so it reveals nothing upstream."""
         return JSONResponse({"status": "ok"})
 
+    if settings.mcp_tasks:
+        _enable_tasks(mcp, settings)
     mcp._stutters_policy = policy  # type: ignore[attr-defined]
     reg = ToolRegistrar(mcp, settings, spec.prefix)
     _register_status(reg, spec, settings, status)
@@ -205,6 +207,17 @@ def build_server(
     if spec_sources is not None:
         register_spec_tools(reg, product=spec.product)
     return mcp
+
+
+def _enable_tasks(mcp: FastMCP[Any], settings: BaseServerSettings) -> None:
+    """Register the SEP-2663 tasks extension (fastmcp-tasks; Docket in memory or Redis/Valkey)."""
+    try:
+        from fastmcp_tasks import TasksExtension
+    except ImportError:
+        raise ValueError(
+            "MCP_TASKS=true needs the tasks extra: install stutters-mcp-core[tasks] (fastmcp-tasks)"
+        ) from None
+    mcp.add_extension(TasksExtension(url=settings.mcp_tasks_url))
 
 
 def _server_version(name: str) -> str:
@@ -301,6 +314,9 @@ def _register_status(
         roles = ctx.lifespan_context.get("roles")
         if roles is not None:
             out["server"]["access"] = roles.describe(current_caller())
+        if reg.task_tools:
+            backend = settings.mcp_tasks_url.split("://", 1)[0]
+            out["server"]["tasks"] = {"backend": backend, "tools": sorted(reg.task_tools)}
         if reg.policy.active:
             out["server"]["safety"] = reg.policy.describe()
             if reg.withheld:
