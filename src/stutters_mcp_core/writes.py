@@ -38,6 +38,7 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from stutters_mcp_core.errors import InvalidRequest
+from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
 
@@ -344,7 +345,9 @@ def _policy_for(ctx: Context) -> SafetyPolicy | None:
     policy = lc.get("policy")
     if policy is None and "settings" in lc:
         policy = lc["settings"].safety_policy()
-    return policy if isinstance(policy, SafetyPolicy) else None
+    if policy is not None and not isinstance(policy, SafetyPolicy):
+        raise TypeError("lifespan_context['policy'] must be a SafetyPolicy")
+    return policy
 
 
 def _tier_of(ctx: Context, tool: str) -> str | None:
@@ -438,6 +441,7 @@ async def preview_or_apply(
             pending.preview = {
                 k: v for k, v in out.items() if k not in ("confirm", "how_to_apply", "expires_in_seconds")
             }
+            pending.preview = mask_secrets(pending.preview)
             pending.preview["args"] = _shown_args(args)
         audit.info(dumps_event("preview", tool, caller, plan.summary, **extra))
         return out

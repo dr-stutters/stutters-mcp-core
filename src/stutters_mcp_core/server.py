@@ -257,6 +257,8 @@ def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
             **pending.preview,
             "how_to_approve": (
                 f"If the user approves, call {pending.tool} with exactly these arguments plus "
-                f'confirm="{token}". You must be a different user than {pending.caller!r}.'
+                f'confirm="{token}". You must be a different user than {pending.caller!r}. Masked '
+                "(secret) or truncated arguments must be supplied in full by the requester: any "
+                "difference refuses the token."
             ),
         }

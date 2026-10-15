@@ -19,7 +19,7 @@ registered.
 Change windows, `;`-separated (any open window allows the change):
     "<days> <HH:MM>-<HH:MM> [Area/City]"   e.g. "Mon-Fri 22:00-02:00 Australia/Sydney", "Sat,Sun 00:00-00:00"
         days: Mon..Sun, ranges and lists, or `daily` / `*`. The window opens on the listed day; an end at or
-        before the start runs past midnight (equal = 24 hours). Time zone defaults to UTC.
+        before the start runs past midnight; 00:00-24:00 is the whole day. Time zone defaults to UTC.
     "<cron: m h dom mon dow> <duration> [Area/City]"   e.g. "0 22 * * 1-5 4h Australia/Sydney"
         the window opens at each cron match and lasts <duration> (30m, 4h, 1h30m, 2d; at most 7d).
 Times are wall-clock in the window's zone (a DST change inside a window shifts its end by an hour).
@@ -113,6 +113,16 @@ def _duration(text: str) -> timedelta:
     return value
 
 
+_FULL_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+
+
+def _day_name(text: str) -> str:
+    t = text.strip()
+    if t in _DAYS or t in _FULL_DAYS:
+        return t[:3]
+    raise KeyError(t)
+
+
 def _day_set(text: str) -> frozenset[int]:
     if text.lower() in ("*", "daily", "every"):
         return frozenset(range(7))
@@ -120,8 +130,8 @@ def _day_set(text: str) -> frozenset[int]:
     for part in text.lower().split(","):
         a, _, b = part.partition("-")
         try:
-            start = _DAYS[a[:3]]
-            end = _DAYS[b[:3]] if b else start
+            start = _DAYS[_day_name(a)]
+            end = _DAYS[_day_name(b)] if b else start
         except KeyError:
             raise ValueError(f"bad day {part!r} (use Mon..Sun, ranges like Mon-Fri, or daily)") from None
         i = start
@@ -146,7 +156,9 @@ def _hhmm(text: str) -> time:
     return time(0 if hour == 24 else hour, int(m.group(2)))
 
 
-def _cron_field(text: str, lo: int, hi: int, names: dict[str, int] | None = None) -> frozenset[int]:
+def _cron_field(
+    text: str, lo: int, hi: int, names: dict[str, int] | None = None, *, wrap: bool = False
+) -> frozenset[int]:
     out: set[int] = set()
     for part in text.lower().split(","):
         rng, _, step_s = part.partition("/")
@@ -169,9 +181,12 @@ def _cron_field(text: str, lo: int, hi: int, names: dict[str, int] | None = None
         else:
             a = num(rng)
             b = hi if step else a
-        if not (lo <= a <= hi and lo <= b <= hi and a <= b):
+        if not (lo <= a <= hi and lo <= b <= hi and (a <= b or wrap)):
             raise ValueError(f"cron value {part!r} out of range {lo}-{hi}")
-        out.update(range(a, b + 1, step or 1))
+        if a <= b:
+            out.update(range(a, b + 1, step or 1))
+        else:  # day-of-week ranges wrap: fri-sun
+            out.update([*range(a, hi + 1), *range(lo, b + 1)][:: step or 1])
     return frozenset(out)
 
 
@@ -226,10 +241,9 @@ class _Window:
     def open_at(self, now: datetime) -> datetime | None:
         """End of the window containing `now`, or None."""
         local = now.astimezone(self.zone)
-        for s in self._starts(now, self.duration, timedelta(0)):
-            if s <= local < s + self.duration:
-                return s + self.duration
-        return None
+        ends = [s + self.duration for s in self._starts(now, self.duration, timedelta(0)) if s <= local]
+        ends = [e for e in ends if local < e]
+        return max(ends) if ends else None
 
     def next_open(self, now: datetime) -> datetime | None:
         local = now.astimezone(self.zone)
@@ -247,7 +261,7 @@ def _parse_window(text: str) -> _Window:
         if len(tokens) > 7:
             raise ValueError("cron windows look like '<m h dom mon dow> <duration> [Area/City]'")
         zone = _zone(tokens[6] if len(tokens) == 7 else None)
-        dows = frozenset(d % 7 for d in _cron_field(dow, 0, 7, _CRON_DOW))  # 0 and 7 are Sunday
+        dows = frozenset(d % 7 for d in _cron_field(dow, 0, 7, _CRON_DOW, wrap=True))  # 0 and 7 = Sunday
         return _Window(
             text,
             zone,
@@ -257,8 +271,8 @@ def _parse_window(text: str) -> _Window:
             doms=_cron_field(dom, 1, 31),
             months=_cron_field(mon, 1, 12, _CRON_MON),
             dows=dows,
-            dom_any=dom == "*",
-            dow_any=dow == "*",
+            dom_any=dom.startswith("*"),  # cron: a field starting with * counts as unrestricted
+            dow_any=dow.startswith("*"),
         )
     if len(tokens) not in (2, 3):
         raise ValueError("windows look like 'Mon-Fri 22:00-02:00 Australia/Sydney' or '0 22 * * 1-5 4h'")
@@ -268,6 +282,8 @@ def _parse_window(text: str) -> _Window:
         raise ValueError(f"bad time range {tokens[1]!r} (HH:MM-HH:MM)")
     start, end = _hhmm(a), _hhmm(b)
     minutes = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)
+    if minutes == 0 and not (a in ("0:00", "00:00") and b == "24:00"):
+        raise ValueError(f"empty time range {tokens[1]!r} (write 00:00-24:00 for a whole day)")
     if minutes <= 0:
         minutes += 24 * 60
     zone = _zone(tokens[2] if len(tokens) == 3 else None)
@@ -375,16 +391,18 @@ class SafetyPolicy:
         return self.allow is None or self.allow.matches(tool, tier)
 
     def blast_limit(self, tool: str) -> int | None:
-        """The limit for `tool`: the first matching override (exact names before globs), else the default."""
+        """The limit for `tool`: an exact-name override, else the smallest matching glob override, else
+        the default."""
         for name, limit in self.blast_overrides:
             if name == tool:
                 return limit
-        for name, limit in self.blast_overrides:
-            if fnmatch.fnmatchcase(tool, name):
-                return limit
-        return self.max_blast_radius
+        globs = [limit for name, limit in self.blast_overrides if fnmatch.fnmatchcase(tool, name)]
+        return min(globs) if globs else self.max_blast_radius
 
     def needs_two_person(self, tool: str, tier: str | None) -> bool:
+        # Fail closed: a write whose tier is unknown counts as matching any tier selector.
+        if tier is None and self.two_person.tiers:
+            return True
         return self.two_person.matches(tool, tier)
 
     def for_write(

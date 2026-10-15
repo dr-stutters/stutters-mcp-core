@@ -72,7 +72,7 @@ def test_weekly_window_across_midnight_in_a_zone() -> None:
 
 
 def test_window_lists_and_24h() -> None:
-    w = ChangeWindow.parse("Sat,Sun 00:00-00:00; daily 12:00-13:00")
+    w = ChangeWindow.parse("Sat,Sun 00:00-24:00; daily 12:00-13:00")
     assert w.state(at("2026-10-17T09:00:00+00:00"))["open"] is True  # Saturday UTC
     assert w.state(at("2026-10-15T12:30:00+00:00"))["open"] is True  # Thursday lunch
     assert w.state(at("2026-10-15T14:00:00+00:00"))["next_open"] == "2026-10-16T12:00+00:00"
@@ -97,6 +97,8 @@ def test_cron_window() -> None:
         ("0 22 * * 1-5 9d", "at most 7d"),
         ("0 99 * * * 1h", "out of range"),
         ("whenever", "windows look like"),
+        ("Mon 10:00-10:00", "empty time range"),
+        ("mondxyz 10:00-11:00", "bad day"),
     ],
 )
 def test_bad_windows_fail_settings(spec: str, error: str) -> None:
@@ -104,12 +106,32 @@ def test_bad_windows_fail_settings(spec: str, error: str) -> None:
         make_settings(mcp_change_window=spec)
 
 
-def test_blast_limits_exact_before_glob() -> None:
+def test_cron_dow_wraps_and_star_step_rule() -> None:
+    w = ChangeWindow.parse("0 9 * * fri-sun 1h")
+    assert w.state(at("2026-10-18T09:30:00+00:00"))["open"] is True  # Sunday
+    assert w.state(at("2026-10-19T09:30:00+00:00"))["open"] is False  # Monday
+    # dom "*/2" counts as "*" for cron's OR rule, so both must match (AND): odd Monday 19th yes, 26th no
+    assert ChangeWindow.parse("0 9 */2 * 1 1h").state(at("2026-10-19T09:30:00+00:00"))["open"] is True
+    assert ChangeWindow.parse("0 9 */2 * 1 1h").state(at("2026-10-26T09:30:00+00:00"))["open"] is False
+
+
+def test_window_across_dst_change() -> None:
+    # Sydney DST starts Sunday 2026-10-04 02:00 -> 03:00. A Sat 22:00-06:00 window still ends 06:00 local.
+    w = ChangeWindow.parse("Sat 22:00-06:00 Australia/Sydney")
+    s = w.state(at("2026-10-03T18:00:00+00:00"))  # Sun 04:00 AEST/05:00 AEDT
+    assert s["open"] is True and s["closes_at"].startswith("2026-10-04T06:00")
+
+
+def test_blast_limits_exact_then_smallest_glob() -> None:
     p = SafetyPolicy.from_settings(
-        make_settings(mcp_max_blast_radius=20, mcp_blast_radius_overrides="fmc_*=50,fmc_deploy=5")
+        make_settings(
+            mcp_max_blast_radius=20,
+            mcp_blast_radius_overrides="fmc_*=50,fmc_create_*=7,fmc_deploy=5,fmc_d*=1",
+        )
     )
     assert p.blast_limit("fmc_deploy") == 5
-    assert p.blast_limit("fmc_create_object") == 50
+    assert p.blast_limit("fmc_create_object") == 7
+    assert p.blast_limit("fmc_list") == 50
     assert p.blast_limit("ise_x") == 20
     with pytest.raises(ValueError, match="tool_or_glob=N"):
         make_settings(mcp_blast_radius_overrides="fmc_deploy:5")
@@ -217,6 +239,11 @@ async def test_two_person_confirm(api: Any, caplog: pytest.LogCaptureFixture) ->
     assert applied["requested_by"] == "alice" and applied["approved_by"] == "bob"
     done = [e for e in audit_events(caplog) if e["event"] == "applied" and e["tool"] == "demo_wipe"]
     assert done[0]["requested_by"] == "alice" and done[0]["approved_by"] == "bob"
+
+
+def test_two_person_fails_closed_on_unknown_tier() -> None:
+    p = SafetyPolicy.from_settings(make_settings(mcp_two_person_tools="@dangerous"))
+    assert p.needs_two_person("demo_x", None) and not p.needs_two_person("demo_x", "write")
 
 
 async def test_review_tool_only_with_two_person(api: Any) -> None:

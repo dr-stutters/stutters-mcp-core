@@ -187,6 +187,11 @@ def run_cli(
             f"Generate one with: {prog} token <name>"
         )
     auth: AuthProvider = NamedTokenVerifier(tokens)
+    if settings.mcp_two_person_tools and len(tokens) < 2:
+        log.warning(
+            "MCP_TWO_PERSON_TOOLS is set but only one token is configured: nobody can approve those changes. "
+            "Give each person their own token (the identity is the token name)."
+        )
     log.info(
         "HTTP transport on %s:%s%s; %d token(s): %s; writes %s; dangerous %s",
         settings.mcp_host,

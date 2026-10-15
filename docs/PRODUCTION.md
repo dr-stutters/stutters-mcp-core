@@ -18,7 +18,7 @@ by tool registration (deny / allow lists), shown in every preview under `policy`
 | `MCP_DENY_TOOLS` | `*_delete_*,@dangerous` | Matching tools are not registered. |
 | `MCP_ALLOW_TOOLS` | `fmc_list_*,fmc_get_*` | Only matching tools are registered. |
 | `MCP_MAX_BLAST_RADIUS` | `20` | A change whose `blast_radius` is larger is blocked (no token). |
-| `MCP_BLAST_RADIUS_OVERRIDES` | `fmc_deploy=5,cml_*=100` | Per-tool limits (exact names win over globs, then the first matching glob). |
+| `MCP_BLAST_RADIUS_OVERRIDES` | `fmc_deploy=5,cml_*=100` | Per-tool limits (an exact name wins; otherwise the smallest matching glob). |
 | `MCP_TWO_PERSON_TOOLS` | `@dangerous,fmc_deploy` | The confirm token must be redeemed by a **different** caller. |
 
 **Tool selectors** (deny, allow, two-person): comma-separated shell globs over tool names plus tier
@@ -27,10 +27,13 @@ withheld. Status lists withheld tools under `server.safety.withheld_tools`.
 
 **Change windows**, several separated by `;` (any open window allows the change):
 - `<days> <HH:MM>-<HH:MM> [Area/City]`: days are `Mon`..`Sun`, ranges (`Mon-Fri`), lists (`Sat,Sun`) or
-  `daily`. The window opens on the listed day; an end at or before the start runs past midnight
-  (`22:00-02:00`), equal times mean 24 hours. The zone defaults to UTC.
+  `daily`. The window opens on the listed day; an end before the start runs past midnight
+  (`22:00-02:00`); a whole day is `00:00-24:00` (other equal times are rejected as a likely typo). The zone
+  defaults to UTC.
 - `<minute hour day-of-month month day-of-week> <duration> [Area/City]`, cron style:
   `0 22 * * 1-5 4h Australia/Sydney` opens at each match for the duration (`30m`, `4h`, `1h30m`, `2d`; at most 7 days).
+  Day-of-week ranges may wrap (`fri-sun`); 0 and 7 are Sunday; as in cron, when both day fields are restricted
+  either may match.
 - Times are wall-clock in the window's zone; a DST change inside a window moves its end by an hour.
 
 **Blast radius.** A write tool sets `Plan(blast_radius=N)` when it can count what a change touches
@@ -42,6 +45,11 @@ the token to a second person (another named bearer token or OAuth identity), who
 `<prefix>_review_change(token)` to see the exact preview, arguments (secrets masked) and requester, and
 then repeats the call with `confirm=<token>`. The applied result and the audit log carry `requested_by`
 and `approved_by`. Over stdio every caller is `local`, so two-person tools can't be confirmed there.
+The identity is the **token name**: give each person their own token (the server warns at startup when
+fewer than two tokens exist). Secret arguments are masked in the review, and the approver's call must carry
+the identical arguments, so for tools with secret arguments the requester has to share them out of band.
+If a tool's tier is unknown, tier selectors such as `@dangerous` count as matching (fail closed).
 
-Audit events added: `blocked` (preview refused by a blocker), `refused` (confirm refused by a rail);
+Audit events added: `blocked` (a preview with blockers, including a product tool's own `Plan.blockers`),
+`refused` (a confirm refused by a rail or blocker);
 `preview` / `applied` / `apply_failed` carry the `policy` section when rails are on.

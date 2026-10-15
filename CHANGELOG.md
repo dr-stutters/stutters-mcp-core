@@ -22,7 +22,9 @@ All notable changes to this project are documented here. The format follows
 - `<prefix>_review_change(token)` (read tier, only when `MCP_TWO_PERSON_TOOLS` is set): the approver sees the
   pending change, its arguments (secrets masked) and who requested it, without using up the token.
   Applied two-person results and audit events carry `requested_by` / `approved_by`.
-- Audit events `blocked` and `refused`.
+- Audit events `blocked` (any preview with blockers, including the tool's own `Plan.blockers`; previously
+  not logged) and `refused`.
+- `tzdata` dependency, so IANA zones work on slim images.
 - `testing.as_caller(name)`: run in-memory calls as a named caller (roles / two-person tests).
 - `PreviewStore.peek()`; `PreviewStore.redeem()` now returns the pending entry (was `None`).
 

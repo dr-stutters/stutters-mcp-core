@@ -88,17 +88,20 @@ class NamedTokenVerifier(TokenVerifier):
         return AccessToken(token=token, client_id=match, scopes=[])
 
 
-_caller_override: list[str] = []  # testing.as_caller() pushes here
+# testing.as_caller() pushes here. Only consulted when there is no authenticated bearer identity, so a
+# real HTTP caller can never be impersonated through it; it exists for in-memory tests (process-global,
+# so don't use as_caller in concurrently running tests).
+_caller_override: list[str] = []
 
 
 def current_caller() -> str:
     """Token name of the HTTP caller, or 'local' for stdio/unauthenticated use."""
     from fastmcp.server.dependencies import get_access_token
 
-    if _caller_override:
-        return _caller_override[-1]
     token = get_access_token()
-    return token.client_id if token is not None else "local"
+    if token is not None:
+        return token.client_id
+    return _caller_override[-1] if _caller_override else "local"
 
 
 def valid_token_name(name: str) -> bool:
