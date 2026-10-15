@@ -22,10 +22,9 @@ from collections.abc import Callable
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.server.auth import AuthProvider
 
 from stutters_mcp_core.audit import configure_audit_log
-from stutters_mcp_core.inbound_auth import NamedTokenVerifier, generate_token, hash_token, valid_token_name
+from stutters_mcp_core.inbound_auth import generate_token, hash_token, valid_token_name
 from stutters_mcp_core.secrets import install_secret_filter, scrub_text
 from stutters_mcp_core.server import ServerSpec
 from stutters_mcp_core.settings import BaseServerSettings
@@ -185,13 +184,28 @@ def run_cli(
         tokens = settings.auth_token_hashes()
     except (ValueError, OSError) as e:
         sys.exit(f"{prog}: invalid MCP_AUTH_TOKENS / MCP_AUTH_TOKENS_FILE: {e}")
-    if not tokens:
+    if not tokens and not settings.mcp_oauth_provider:
         sys.exit(
-            f"{prog}: HTTP transport requires MCP_AUTH_TOKENS (or MCP_AUTH_TOKENS_FILE). "
-            f"Generate one with: {prog} token <name>"
+            f"{prog}: HTTP transport requires MCP_AUTH_TOKENS (or MCP_AUTH_TOKENS_FILE) "
+            "and/or MCP_OAUTH_PROVIDER. "
+            f"Generate a token with: {prog} token <name>"
         )
-    auth: AuthProvider = NamedTokenVerifier(tokens)
-    if settings.mcp_two_person_tools and len(tokens) < 2:
+    from stutters_mcp_core.oauth import build_auth
+
+    try:
+        auth = build_auth(settings, tokens)
+    except Exception as e:  # noqa: BLE001 - e.g. OIDC discovery failed
+        sys.exit(f"{prog}: OAuth setup failed: {scrub_text(str(e))}")
+    if auth is None:  # unreachable: tokens or OAuth were checked above
+        sys.exit(f"{prog}: no HTTP authentication configured")
+    if settings.mcp_oauth_provider:
+        log.info(
+            "OAuth (%s) on: base URL %s, allowed users: %s",
+            settings.mcp_oauth_provider,
+            settings.mcp_oauth_base_url,
+            settings.mcp_oauth_allowed_users,
+        )
+    if settings.mcp_two_person_tools and len(tokens) < 2 and not settings.mcp_oauth_provider:
         log.warning(
             "MCP_TWO_PERSON_TOOLS is set but only one token is configured: nobody can approve those changes. "
             "Give each person their own token (the identity is the token name)."
