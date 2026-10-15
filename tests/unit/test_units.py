@@ -327,3 +327,14 @@ def test_list_result_keeps_truncation_note_with_tool_note() -> None:
         assert plain["note"] == "x"
     finally:
         set_max_chars(40_000)
+
+
+def test_index_collapses_duplicate_slashes() -> None:
+    doc = {
+        "openapi": "3.0.0",
+        "info": {"version": "1"},
+        "paths": {"//dna/intent/api/v1/x": {"get": {"responses": {}}}},
+    }
+    idx = build_index(doc)
+    assert idx.operations[0].path == "/dna/intent/api/v1/x"
+    assert idx.definition("GET /dna/intent/api/v1/x")["operations"]
