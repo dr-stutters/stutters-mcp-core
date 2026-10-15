@@ -42,6 +42,7 @@ from stutters_mcp_core.secrets import SecretErrorMiddleware, scrub_error, scrub_
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
+from stutters_mcp_core.targets import TargetState, target_name, target_settings
 from stutters_mcp_core.writes import PreviewStore, Tier, ToolRegistrar, get_previews
 
 log = logging.getLogger(__name__)
@@ -103,43 +104,62 @@ def build_server(
     set_max_chars(settings.mcp_max_response_chars)
     cache_dir = settings.cache_dir_for(spec.name)
 
-    @lifespan
-    async def server_lifespan(server: FastMCP[Any]) -> AsyncIterator[dict[str, Any]]:
-        app = client_factory(settings)
-        if settings.url.startswith("http://"):
-            log.warning("%sURL uses plain HTTP; credentials are sent unencrypted", spec.env_prefix)
-        if not settings.verify_ssl and settings.ca_bundle is None:
-            log.warning("%sVERIFY_SSL=false: the appliance's TLS certificate is not checked", spec.env_prefix)
+    names = settings.target_names()
+    multi = len(names) > 1
+    # Built now so a bad target configuration fails at startup, not on first use.
+    configs: dict[str, BaseServerSettings] = {names[0]: settings}
+    for name in names[1:]:
+        configs[name] = target_settings(settings, name)
+
+    async def open_target(name: str, cfg: BaseServerSettings) -> dict[str, Any]:
+        label = f"{spec.product} [{name}]" if multi else spec.product
+        app = client_factory(cfg)
+        if cfg.url.startswith("http://"):
+            log.warning("%s: URL uses plain HTTP; credentials are sent unencrypted", label)
+        if not cfg.verify_ssl and cfg.ca_bundle is None:
+            log.warning("%s: VERIFY_SSL=false: the appliance's TLS certificate is not checked", label)
         if status is not None:
             try:
                 info = await status(app)
                 log.info(
                     "Connected to %s at %s: %s",
-                    spec.product,
-                    scrub_url(settings.url),
-                    _clean(_brief(mask_secrets(info)), settings),
+                    label,
+                    scrub_url(cfg.url),
+                    _clean(_brief(mask_secrets(info)), cfg),
                 )
             except Exception as e:  # noqa: BLE001 - never refuse to start over the status probe
                 # The model can call <prefix>_status to see the problem.
-                log.error("%s startup check failed: %s", spec.product, _clean(str(e), settings))
-        state: dict[str, Any] = {
-            "client": app,
-            "settings": settings,
-            "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
-            "policy": policy,
-            "roles": roles,
-        }
+                log.error("%s startup check failed: %s", label, _clean(str(e), cfg))
+        bucket: dict[str, Any] = {"client": app, "settings": cfg}
         if spec_sources is not None:
-            state["specs"] = SpecStore(app, spec_sources(app), cache_dir, settings.url)
-        listener = None
-        if settings.mcp_metrics and settings.mcp_metrics_port is not None:
-            listener = await metrics.start_listener(settings.mcp_metrics_host, settings.mcp_metrics_port)
+            bucket["specs"] = SpecStore(app, spec_sources(app), cache_dir, cfg.url)
+        return bucket
+
+    @lifespan
+    async def server_lifespan(server: FastMCP[Any]) -> AsyncIterator[dict[str, Any]]:
+        per_target: dict[str, dict[str, Any]] = {}
         try:
-            yield state
+            for name, cfg in configs.items():
+                per_target[name] = await open_target(name, cfg)
+            shared: dict[str, Any] = {
+                "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
+                "policy": policy,
+                "roles": roles,
+            }
+            state: dict[str, Any] = (
+                TargetState(names[0], per_target, shared) if multi else {**per_target[names[0]], **shared}
+            )
+            listener = None
+            if settings.mcp_metrics and settings.mcp_metrics_port is not None:
+                listener = await metrics.start_listener(settings.mcp_metrics_host, settings.mcp_metrics_port)
+            try:
+                yield state
+            finally:
+                if listener is not None:
+                    await listener.stop()
         finally:
-            if listener is not None:
-                await listener.stop()
-            await _aclose(app)
+            for bucket in per_target.values():
+                await _aclose(bucket["client"])
 
     instructions = spec.instructions.rstrip() + "\n"
     if settings.mcp_enable_writes:
@@ -253,22 +273,30 @@ def _register_status(
     @reg.read(title=f"{spec.product} status", name=f"{spec.prefix}_status", description=description)
     async def status_tool(ctx: Context) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        target_cfg: BaseServerSettings = ctx.lifespan_context.get("settings") or settings
         if status is not None:
             try:
                 out[spec.prefix] = mask_secrets(await status(get_client(ctx)))
             except UpstreamError as e:
-                out[spec.prefix] = {"error": _clean(str(e), settings)}
+                out[spec.prefix] = {"error": _clean(str(e), target_cfg)}
             except ValueError as e:  # e.g. missing credentials
-                out[spec.prefix] = {"error": _clean(f"Configuration problem: {e}", settings)}
+                out[spec.prefix] = {"error": _clean(f"Configuration problem: {e}", target_cfg)}
         tiers = reg.tiers
+        state = ctx.lifespan_context
+        target_info = (
+            {"instances": state.names, "instance": target_name() or state.default}
+            if isinstance(state, TargetState)
+            else {}
+        )
         out["server"] = {
             "name": spec.name,
             "core_version": __version__,
-            "url": scrub_url(settings.url),
-            "tls_verify": settings.verify_ssl or settings.ca_bundle is not None,
+            "url": scrub_url(target_cfg.url),
+            "tls_verify": target_cfg.verify_ssl or target_cfg.ca_bundle is not None,
             "writes_enabled": settings.mcp_enable_writes,
             "dangerous_enabled": settings.mcp_enable_dangerous,
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
+            **target_info,
         }
         roles = ctx.lifespan_context.get("roles")
         if roles is not None:
@@ -312,13 +340,16 @@ def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
             raise InvalidRequest(
                 "Unknown or expired two-person token. Ask the requester to preview the change again."
             )
+        tool_name, _, on_target = pending.tool.partition("@")
         return {
-            "tool": pending.tool,
+            "tool": tool_name,
+            **({"instance": on_target} if on_target else {}),
             "requested_by": pending.caller,
             "expires_in_seconds": store.remaining(pending),
             **pending.preview,
             "how_to_approve": (
-                f"If the user approves, call {pending.tool} with exactly these arguments plus "
+                f"If the user approves, call {tool_name} with exactly these arguments"
+                f"{f' (instance={on_target!r})' if on_target else ''} plus "
                 f'confirm="{token}". You must be a different user than {pending.caller!r}. Masked '
                 "(secret) or truncated arguments must be supplied in full by the requester: any "
                 "difference refuses the token."

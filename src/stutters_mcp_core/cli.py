@@ -56,15 +56,23 @@ def _configure_logging(settings: BaseServerSettings, package: str) -> None:
     install_secret_filter(settings, [logging.getLogger("stutters_mcp_core.audit")])
 
 
-async def _check(spec: ServerSpec, server: FastMCP[Any]) -> int:
+async def _check(spec: ServerSpec, server: FastMCP[Any], targets: list[str] | None = None) -> int:
     from fastmcp import Client
 
+    failed = 0
     async with Client(server) as client:
-        result = await client.call_tool(f"{spec.prefix}_status", raise_on_error=False)
-    data: Any = result.structured_content or {"text": [getattr(c, "text", "") for c in result.content]}
-    print(json.dumps(data, indent=2, default=str))
-    product = data.get(spec.prefix, {}) if isinstance(data, dict) else {}
-    return 1 if result.is_error or (isinstance(product, dict) and "error" in product) else 0
+        for target in targets or [None]:  # type: ignore[list-item]
+            args = {"instance": target} if target else {}
+            result = await client.call_tool(f"{spec.prefix}_status", args, raise_on_error=False)
+            data: Any = result.structured_content or {
+                "text": [getattr(c, "text", "") for c in result.content]
+            }
+            if target:
+                print(f"== instance {target}")
+            print(json.dumps(data, indent=2, default=str))
+            product = data.get(spec.prefix, {}) if isinstance(data, dict) else {}
+            failed |= result.is_error or (isinstance(product, dict) and "error" in product)
+    return 1 if failed else 0
 
 
 _PLACEHOLDER_URL = "https://manifest.invalid"
@@ -172,7 +180,8 @@ def run_cli(
     log = logging.getLogger(spec.name)
 
     if args.command == "check":
-        sys.exit(asyncio.run(_check(spec, create_server(settings))))
+        names = settings.target_names()
+        sys.exit(asyncio.run(_check(spec, create_server(settings), names if len(names) > 1 else None)))
 
     transport = args.transport or settings.mcp_transport
     if transport == "stdio":

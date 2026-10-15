@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, ClassVar, Literal, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -137,6 +137,12 @@ class BaseServerSettings(BaseSettings):
     retries: int = Field(default=2, ge=0, le=10)
     rate_limit: float | None = Field(default=None, gt=0, description="max requests per minute")
     max_concurrency: int | None = Field(default=None, ge=1)
+    # Fields a named instance never inherits from the default instance (G10), beyond URL, credentials,
+    # TLS checking and secrets; products list appliance-specific ones, e.g. {"domain"} for FMC.
+    per_instance_fields: ClassVar[frozenset[str]] = frozenset()
+    # Several appliances (G10, ADR-004): <P>_INSTANCES=prod,dr adds instances read from <P>_PROD_URL, ...
+    instances: str | None = None
+    default_instance: str = "default"
 
     # --- MCP server (unprefixed) ----------------------------------------------------------
     mcp_transport: Literal["stdio", "http"] = Field(default="stdio", validation_alias=_alias("MCP_TRANSPORT"))
@@ -303,6 +309,15 @@ class BaseServerSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _targets_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.targets import TARGET_NAME_RE
+
+        if not TARGET_NAME_RE.match(self.default_instance):
+            raise ValueError("DEFAULT_INSTANCE: use lowercase letters, digits and _ (start with a letter)")
+        self.target_names()
+        return self
+
+    @model_validator(mode="after")
     def _metrics_port_needs_metrics(self) -> BaseServerSettings:
         if self.mcp_metrics_port is not None and not self.mcp_metrics:
             log.warning("MCP_METRICS_PORT is set but MCP_METRICS is not true: no metrics are served")
@@ -331,6 +346,12 @@ class BaseServerSettings(BaseSettings):
                     f"MCP_ROLES_FILE: cannot read {self.mcp_roles_file}: {e.strerror or e}"
                 ) from None
         return RoleMap.parse(self.mcp_roles or "", self.mcp_default_role, file_spec=file_spec)
+
+    def target_names(self) -> list[str]:
+        """[default instance, *<P>_INSTANCES]; a single entry means single-instance (the normal case)."""
+        from stutters_mcp_core.targets import parse_target_names
+
+        return parse_target_names(self.instances, self.default_instance)
 
     def safety_policy(self) -> Any:
         """The parsed safety rails (stutters_mcp_core.policy.SafetyPolicy)."""

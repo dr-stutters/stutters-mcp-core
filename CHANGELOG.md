@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-15
+
+### Added
+- **Several appliances per server (G10, ADR-004)** (`stutters_mcp_core.targets`, docs/PRODUCTION.md):
+  `<P>_INSTANCES=prod,dr` adds instances read from `<P>_PROD_URL`, `<P>_PROD_USERNAME`, ... (other fields inherited
+  from the default instance, named by `<P>_DEFAULT_INSTANCE`). Every tool gets an optional `instance` argument and
+  `get_client(ctx)` / `get_settings(ctx)` / the spec store follow it; confirm tokens are bound to their instance;
+  status and `<server> check` cover each instance. Single-instance servers are unchanged (no new argument).
+
+### Adopting (server builders)
+- Bump to `tag = "v0.9.0"`. Check that tools read appliance state only through `get_client(ctx)` /
+  `get_settings(ctx)` (module-level caches keyed by nothing would mix instances), and that no tool has a
+  parameter named `instance`. Test: `make_settings(instances="prod")` with `monkeypatch.setenv("<P>_PROD_URL", ...)`,
+  then call a tool with `{"instance": "prod"}`.
+- `status` code reading `settings.url` from the closure should use `get_settings(ctx)`.
+
 ## [0.8.1] - 2026-10-15
 
 ### Fixed

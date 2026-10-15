@@ -267,3 +267,25 @@ on the app registration, add a scope (e.g. `api://<client-id>/mcp`), and set
 
 Tested in CI with a mocked GitHub: registration, consent, callback, PKCE token exchange, MCP request with the
 issued token, named tokens alongside, and an authenticated-but-not-allowed login refused (tests/unit/test_oauth.py).
+
+## Several appliances per server (core 0.9.0, roadmap G10, [ADR-004](adr/004-multi-instance.md))
+
+One server can reach several instances of its product (prod and lab ISE, an FMC per region). Off unless
+`<P>_INSTANCES` is set; with one instance nothing changes.
+
+```bash
+ISE_URL=https://ise-lab.example        # the default instance ...
+ISE_DEFAULT_INSTANCE=lab               # ... and its name (default: "default")
+ISE_INSTANCES=prod,dr                  # more instances, each with its own prefix:
+ISE_PROD_URL=https://ise-prod.example
+ISE_PROD_USERNAME=mcp-ro
+ISE_PROD_PASSWORD_FILE=/run/secrets/ise_prod_password   # _FILE / _REF work per instance
+ISE_PROD_CA_BUNDLE=/certs/prod-ca.pem  # TLS checking, secrets, URL and credentials are per instance;
+                                       # other fields not set (timeouts, rate limits...) are inherited
+```
+
+Every tool then takes an optional `instance` argument (an enum of the names; omitted = the default
+instance). `<prefix>_status(instance=...)` shows that instance and lists them all; `<server> check` checks
+each. A confirm token only works on the instance it was previewed on, and previews, results and audit
+events carry `instance`. Safety rails, roles and the tier switches are server-wide: run a separate
+container for an instance that needs a different write policy (e.g. read-only production).
