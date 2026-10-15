@@ -201,3 +201,59 @@ nothing is recorded. A listener port that is already in use is logged and skippe
 running); a non-loopback `MCP_METRICS_HOST` logs a warning. Useful
 alerts: `rate(mcp_tool_calls_total{outcome="error"}[5m])`, `rate(mcp_upstream_requests_total{status=~"5..|timeout|error"}[5m])`,
 `increase(mcp_write_events_total{event="applied"}[1h])` (changes made), `rate(mcp_rate_limit_wait_seconds_total[5m])`.
+
+## OAuth 2.1 for HTTP (core 0.8.0, roadmap G1)
+
+Interactive users log in through an identity provider instead of holding a long-lived bearer token;
+automation keeps its named tokens (`MCP_AUTH_TOKENS`). Both are accepted at once. Off unless
+`MCP_OAUTH_PROVIDER` is set; with it set, HTTP may run with OAuth only (no tokens).
+
+| Variable | Example | Notes |
+|---|---|---|
+| `MCP_OAUTH_PROVIDER` | `github` | `github`, or `oidc` for any OIDC IdP (Entra ID, Okta, Keycloak, Google...) |
+| `MCP_OAUTH_CLIENT_ID` | `Ov23li...` | from the OAuth app you register (steps below) |
+| `MCP_OAUTH_CLIENT_SECRET` / `_FILE` | | required for GitHub; for OIDC optional with `MCP_OAUTH_JWT_KEY` (public client) |
+| `MCP_OAUTH_BASE_URL` | `https://mcp.lab.example:8443` | public URL clients use; must be `https://` (or `http://localhost`) |
+| `MCP_OAUTH_ALLOWED_USERS` | `octocat,ops-*` | **required**: logins allowed in (globs, case-insensitive). Anyone else the IdP authenticates gets 401 |
+| `MCP_OAUTH_CONFIG_URL` | `https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration` | `oidc` only |
+| `MCP_OAUTH_SCOPES` | `read:user` | IdP scopes to require (GitHub default `user`; OIDC default `openid`) |
+| `MCP_OAUTH_REDIRECT_URIS` | `http://localhost:*,http://127.0.0.1:*` | MCP-client redirect URIs allowed to register (default: any) |
+| `MCP_OAUTH_JWT_KEY` / `_FILE` | 32+ random chars | signs the tokens this server issues; default derived from the client secret. Set it so tokens survive secret rotation |
+| `MCP_OAUTH_STORAGE_DIR` | `/cache/oauth` | encrypted client registrations and upstream tokens (must be writable and persistent; the image's `/cache` volume works) |
+
+How it works: FastMCP's OAuth proxy publishes OAuth metadata (`/.well-known/oauth-authorization-server`),
+lets MCP clients register themselves (dynamic client registration), shows a consent page, sends the user to
+the IdP, and issues the client its own short-lived token bound to the upstream one, which it re-checks on
+each request. The caller identity is `<provider>:<login>` (`github:octocat`, `oidc:alice@example.com`):
+use it in `MCP_ROLES` (`github:octocat:rw`), and it appears in previews, two-person confirms and the audit
+log. Named-token callers keep their token name.
+
+### Steps for the repo owner (not done overnight: needs your GitHub account)
+
+**GitHub (reference IdP).**
+1. Decide the public URL. The server must be reachable over HTTPS by your browser and MCP client:
+   - a TLS reverse proxy in front of the container, e.g. Caddy on cortex: `mcp-ise.lab.example { reverse_proxy 127.0.0.1:8036 }`
+     with your internal CA or a public certificate → `MCP_OAUTH_BASE_URL=https://mcp-ise.lab.example`; or
+   - for one user, an SSH tunnel (`ssh -L 8036:127.0.0.1:8036 cortex`) → `MCP_OAUTH_BASE_URL=http://localhost:8036`.
+2. GitHub → Settings → Developer settings → **OAuth Apps** → *New OAuth App* (one per server, or one per URL):
+   - Application name: `ise-mcp (lab)`; Homepage URL: the base URL;
+   - **Authorization callback URL: `<base URL>/auth/callback`** (exactly);
+   - leave *Enable Device Flow* off. Register, then *Generate a new client secret*.
+3. On cortex, in the server's `secrets/` (see the Docker-secrets override): `printf '%s' '<client secret>' > secrets/<server>_oauth_secret`,
+   and `openssl rand -base64 32 > secrets/<server>_oauth_jwt_key`; mount both and set
+   `MCP_OAUTH_CLIENT_SECRET_FILE=/run/secrets/<server>_oauth_secret`, `MCP_OAUTH_JWT_KEY_FILE=/run/secrets/<server>_oauth_jwt_key`.
+4. In `.env`: `MCP_OAUTH_PROVIDER=github`, `MCP_OAUTH_CLIENT_ID=<client id>`, `MCP_OAUTH_BASE_URL=<base URL>`,
+   `MCP_OAUTH_ALLOWED_USERS=<your GitHub login>`, `MCP_OAUTH_STORAGE_DIR=/cache/oauth`; optionally
+   `MCP_ROLES=github:<login>:admin`. Keep `MCP_AUTH_TOKENS` for scripts. `docker compose up -d`.
+5. Client: `claude mcp add --transport http ise <base URL>/mcp` (no header), then `/mcp` in Claude Code →
+   *Authenticate*; the browser opens the consent page, then GitHub. `ise_status` shows `server.access` with
+   `github:<login>` when roles are on.
+
+**OIDC (e.g. Entra ID).** Register an app (Entra: *App registrations → New*, platform *Web*, redirect URI
+`<base URL>/auth/callback`, create a client secret); set `MCP_OAUTH_PROVIDER=oidc`,
+`MCP_OAUTH_CONFIG_URL=https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration`,
+`MCP_OAUTH_CLIENT_ID`, `MCP_OAUTH_CLIENT_SECRET_FILE`, `MCP_OAUTH_SCOPES=openid,profile,email`, and allow-list
+logins as they appear in `preferred_username`/`email` (e.g. `*@example.com`).
+
+Tested in CI with a mocked GitHub: registration, consent, callback, PKCE token exchange, MCP request with the
+issued token, named tokens alongside, and an authenticated-but-not-allowed login refused (tests/unit/test_oauth.py).

@@ -102,7 +102,10 @@ def current_caller() -> str:
 
     token = get_access_token()
     if token is not None:
-        return token.client_id
+        # OAuth + tokens (stutters_mcp_core.oauth) records the resolved identity in a claim; a plain
+        # NamedTokenVerifier's client_id is the token name.
+        identity = (token.claims or {}).get("stutters_identity")
+        return str(identity) if identity else token.client_id
     return _caller_override[-1] if _caller_override else "local"
 
 

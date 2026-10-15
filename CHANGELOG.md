@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **OAuth 2.1 for HTTP (G1)** (`stutters_mcp_core.oauth`, docs/PRODUCTION.md): `MCP_OAUTH_PROVIDER=github|oidc` puts
+  FastMCP's OAuth proxy in front of the server (metadata, dynamic client registration, consent, PKCE) next to the
+  named bearer tokens (MultiAuth). `MCP_OAUTH_ALLOWED_USERS` is required. OAuth callers are `<provider>:<login>`
+  for roles, previews, two-person and the audit log; token callers keep their name. HTTP may run OAuth-only.
+
 ## [0.7.0] - 2026-10-15
 
 ### Added
