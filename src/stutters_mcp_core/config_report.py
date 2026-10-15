@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import SecretStr
 
+from stutters_mcp_core.formatting import is_secret_key
 from stutters_mcp_core.secrets import scrub_url
 from stutters_mcp_core.settings import BaseServerSettings, _env_var, _is_secret
 
@@ -57,11 +58,13 @@ def config_report(settings: BaseServerSettings) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for name, info in cls.model_fields.items():
         var = _env_var(name, info, prefix)
-        secret = _is_secret(info.annotation)
+        # SecretStr fields, and any field whose name looks secret (a product field typed as plain str)
+        secret = _is_secret(info.annotation) or (is_secret_key(name) and not name.endswith(("_file", "_ttl")))
         value = getattr(settings, name)
         entry: dict[str, Any] = {"source": _source(var, env, dotenv, secret)}
         if secret or isinstance(value, SecretStr):
-            entry["set"] = value is not None and bool(value.get_secret_value())
+            raw = value.get_secret_value() if isinstance(value, SecretStr) else value
+            entry["set"] = raw not in (None, "", False)
         elif name == "url" or (isinstance(value, str) and value.startswith(("http://", "https://"))):
             entry["value"] = scrub_url(value)
         elif name in ("mcp_roles",) and value:

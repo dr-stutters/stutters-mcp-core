@@ -57,3 +57,15 @@ def test_cli_config_command(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Capt
     monkeypatch.setenv("MCP_ROLES", "bad entry")
     with pytest.raises(SystemExit, match="invalid configuration"):
         run_cli(SPEC, DemoSettings, create, argv=["config"])
+
+
+def test_plain_str_field_with_a_secret_name_is_masked() -> None:
+    from stutters_mcp_core import server_config
+
+    class S(DemoSettings):
+        model_config = server_config("DEMO_")
+        shared_secret: str | None = None
+
+    report = config_report(S(_env_file=None, url="https://x.example", shared_secret="plain-secret-123"))  # type: ignore[call-arg]
+    assert report["settings"]["DEMO_SHARED_SECRET"] == {"source": "default", "set": True}
+    assert "plain-secret-123" not in json.dumps(report, default=str)
