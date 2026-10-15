@@ -311,3 +311,10 @@ Limits: roles are checked when the task is submitted (a role removed afterwards 
 a task whose caller credentials expired before it ran is refused (never run as `local`); `tasks/cancel` during
 an apply stops the tool but can leave an upstream change half-done (audit event `apply_cancelled`; check the
 appliance). Workers run in the server process; separate `fastmcp-tasks` worker processes are not supported.
+## Audit log rotation (core 0.11.0, roadmap C13)
+
+`MCP_AUDIT_LOG=/cache/audit.log` writes one JSON line per event (tool calls, previews, applies, refusals,
+denials). On a long-running server, also set `MCP_AUDIT_LOG_MAX_MB=50` (rotate at 50 MB) and
+`MCP_AUDIT_LOG_BACKUPS=5` (keep `audit.log.1` ... `audit.log.5`). Unset, the file is never rotated (as
+before). For central retention ship the file (or `MCP_AUDIT_LOG=stderr` via the container log driver) to your
+log platform; every line starts `{"ts": ..., "audit": {...}}`.

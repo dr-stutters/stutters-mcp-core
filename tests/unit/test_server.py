@@ -205,3 +205,31 @@ async def test_get_definition_examples_flag(api: Any) -> None:
     text = await call_tool(server, "demo_get_definition", {"name": "POST /api/items", "examples": True})
     d = json.loads(text) if isinstance(text, str) else text
     assert d["operations"][0]["examples"] == "none in the spec"
+
+
+def test_audit_log_rotation(tmp_path: Any) -> None:
+    import logging
+
+    from stutters_mcp_core.audit import audit as audit_logger
+    from stutters_mcp_core.audit import configure_audit_log
+
+    path = tmp_path / "audit.log"
+    configure_audit_log(str(path), max_mb=0.001, backups=2)  # ~1 KB
+    try:
+        for i in range(100):
+            audit_logger.info(json.dumps({"event": "tool_call", "n": i, "pad": "x" * 50}))
+        files = sorted(p.name for p in tmp_path.iterdir())
+        assert files == ["audit.log", "audit.log.1", "audit.log.2"]
+        assert all(path.stat().st_size < 2048 for path in tmp_path.iterdir())
+    finally:
+        configure_audit_log("off")
+        audit_logger.handlers.clear()
+        audit_logger.propagate = True
+        audit_logger.setLevel(logging.NOTSET)
+
+
+def test_audit_rotation_settings() -> None:
+    s = make_settings(mcp_audit_log_max_mb="", mcp_audit_log_backups=3)
+    assert s.mcp_audit_log_max_mb is None and s.mcp_audit_log_backups == 3
+    with pytest.raises(ValueError):
+        make_settings(mcp_audit_log_max_mb=0)

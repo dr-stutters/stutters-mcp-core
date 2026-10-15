@@ -161,6 +161,13 @@ class BaseServerSettings(BaseSettings):
     )
     mcp_task_timeout: float = Field(default=600.0, gt=0, validation_alias=_alias("MCP_TASK_TIMEOUT"))
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
+    # Rotation for a file audit log (C13); unset = no rotation (as before)
+    mcp_audit_log_max_mb: float | None = Field(
+        default=None, gt=0, validation_alias=_alias("MCP_AUDIT_LOG_MAX_MB")
+    )
+    mcp_audit_log_backups: int = Field(
+        default=5, ge=1, le=100, validation_alias=_alias("MCP_AUDIT_LOG_BACKUPS")
+    )
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
     # --- OAuth 2.1 for HTTP (G1, stutters_mcp_core.oauth); off unless MCP_OAUTH_PROVIDER is set
@@ -266,7 +273,7 @@ class BaseServerSettings(BaseSettings):
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("mcp_max_blast_radius", "mcp_metrics_port", mode="before")
+    @field_validator("mcp_max_blast_radius", "mcp_metrics_port", "mcp_audit_log_max_mb", mode="before")
     @classmethod
     def _blank_int_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
