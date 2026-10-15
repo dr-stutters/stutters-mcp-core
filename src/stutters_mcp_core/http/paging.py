@@ -199,6 +199,7 @@ class NoPaging:
         offset: int = 0,
         max_page: int | None = None,
     ) -> Page:
+        _page_cap(max_page, 1)  # validated like the other pagers; the API returns everything anyway
         data = await client.get(path, params)
         everything = _as_list(dig(data, self.items))
         return Page(everything[offset : offset + limit], offset, len(everything))
