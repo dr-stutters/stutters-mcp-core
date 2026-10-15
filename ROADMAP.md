@@ -90,7 +90,7 @@ Compiled from the four server roadmaps (2026-10-15). Items in **Now** need none 
 | # | Prerequisite | Who / effort | Unblocks |
 |---|---|---|---|
 | P2 | **ISE pxGrid persona** for the Catalyst Center ↔ ISE integration (appliance to appliance; our servers don't subscribe to pxGrid) | ISE UI/API toggle (lab) | catc D8, D9, D13 |
-| P3 | **CML registered licence** (20 nodes + extra users) instead of EVAL (5 nodes) | Licence purchase/registration | cml L15, L17; relieves capacity limits on cml L10/L11/L13/L14, catc D13/D15, fmc F10/F11 |
+| ✅ P3 | **CML licence: DONE 2026-10-15.** Enterprise, 70 running nodes, multi-user | — | Unblocked: cml L15, L17; capacity for cml L10/L11/L13/L14, catc D13/D15, fmc F10/F11 |
 | P4 | **Windows lab server (AD + CA)** reachable and configured (the `Windows_Server` MCP host is still a placeholder) | Point at a lab/CML Windows Server | ise I8 (cert lifecycle), I11 (AD join), cml L11/L13 (EAP-TLS clients); optional CA for P2 |
 | P5 | **FMC UI-only setup**: a dedicated API user with a custom role | FMC UI (manual) | fmc F16 (gate) |
 | P6 | **SWIM image**: a `c8000v-universalk9.<other-ver>.SPA.bin` from cisco.com (entitled account), plus an HTTP server CatC can reach | cisco.com download + a small web server | catc D12 |
@@ -105,7 +105,7 @@ Time-limited: the FMC Smart Licensing evaluation expires ≈2027-01-12; the ISE 
 
 | Service | Needed for | Provided by | Network path | Status |
 |---|---|---|---|---|
-| CML controller (EVAL: 5 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
+| CML controller (Enterprise: 70 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
 | ISE pxGrid persona | Catalyst Center ↔ ISE integration (appliance to appliance) | ISE node (currently OFF) | CatC → ISE :8910 | ⏳ catc Next (P2) |
 | FTDv / FMCv / cat8000v / cat9000v images | Lab recipes | CML image library | — | ✅ present |
 | Device images (.bin) for SWIM | CatC SWIM live tests | cisco.com download | upload to CatC | ❌ missing |
