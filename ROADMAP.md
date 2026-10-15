@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15: core v0.4.0 (prompt test kit); event ingestion scrapped (ADR-003, core v0.3.0); servers are pull-only. Current releases: core v0.4.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+_Last updated 2026-10-15 (overnight 2): core v0.11.0. Production gate done in core except G6 (needs older product versions) and the owner-side parts of G9; Later C12 done; new items C13–C16 done. Servers are pull-only (ADR-003)._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -39,13 +39,17 @@ Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or ne
 |---|---|---|---|---|
 | ❌ [C8](https://github.com/dr-stutters/stutters-mcp-core/issues/13) | ~~XML helper in core~~: not planned (2026-10-15). Only ISE parses XML (MnT); CML, FMC and CatC are JSON-only. ISE keeps `xmlutil.py` | Avoid duplicates | none | S |
 | ✅ [C9](https://github.com/dr-stutters/stutters-mcp-core/issues/14) | **Prompt test kit** (✅ v0.4.0): `<server> tools --json` manifests, cross-server reference checks both ways, prompt snapshots | Prompts rot silently otherwise | none | S |
+| ✅ [C13](https://github.com/dr-stutters/stutters-mcp-core/issues/47) | **Audit log rotation** (✅ v0.11.0): `MCP_AUDIT_LOG_MAX_MB` / `_BACKUPS` | A file audit log grew without bound on hosted servers | none | S |
+| ✅ [C14](https://github.com/dr-stutters/stutters-mcp-core/issues/48) | **Runtime session tokens masked automatically** (✅ v0.11.0) | G4 masked configured secrets only | none | S |
+| ✅ [C15](https://github.com/dr-stutters/stutters-mcp-core/issues/49) | **Per-instance write rules** (✅ v0.11.0): `<P>_<NAME>_READ_ONLY/TWO_PERSON/CHANGE_WINDOW/MAX_BLAST_RADIUS` | Read-only production next to a lab in one server (ADR-004 follow-up) | none | M |
+| ✅ [C16](https://github.com/dr-stutters/stutters-mcp-core/issues/50) | **Per-caller rate limit** (✅ v0.11.0): `MCP_CALLER_RATE_LIMIT` (+ by role) | One client or leaked token could monopolise the appliance | none | S |
 
 ### Later
 _C6, C7, C10, C11 (event persistence, correlation, notifications, fan-out) were dropped with ADR-003._
 
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C12](https://github.com/dr-stutters/stutters-mcp-core/issues/17) | Long-running task registry (MCP tasks) for deploys, discoveries and SWIM | Better UX than wait/poll for 10+ minute jobs | Client support | M |
+| ✅ [C12](https://github.com/dr-stutters/stutters-mcp-core/issues/17) | Long-running task registry (MCP tasks) for deploys, discoveries and SWIM (✅ v0.10.0: `task=True` + `MCP_TASKS`, fastmcp-tasks) | Better UX than wait/poll for 10+ minute jobs | Client support | M |
 
 ## Cross-product workflow prompts (catalogue)
 
@@ -72,16 +76,16 @@ Labs and PoCs may use the servers before then.
 
 | # | Item | Notes / external needs | Size |
 |---|---|---|---|
-| [G1](https://github.com/dr-stutters/stutters-mcp-core/issues/18) | **OAuth 2.1 for HTTP** (FastMCP auth; GitHub or customer IdP), keeping named bearer tokens for automation | An IdP app registration; public HTTPS if used with Claude Desktop connectors | M |
-| [G2](https://github.com/dr-stutters/stutters-mcp-core/issues/19) | **Per-user roles** (`ro` / `rw` / `admin`) mapped to tiers; the identity shows in previews and the audit log | — | M |
-| [G3](https://github.com/dr-stutters/stutters-mcp-core/issues/20) | **Least-privilege account guides** per product, tested: ISE custom admin roles (ERS operator, MnT), FMC custom user role, CatC custom role (RBAC), CML non-admin | Customer creates the accounts | M |
-| [G4](https://github.com/dr-stutters/stutters-mcp-core/issues/21) | **Secrets**: `*_PASSWORD_FILE` / Docker secrets everywhere (✅ core `<VAR>_FILE` for every secret setting, v0.4.0; servers' compose files still to adopt); no secrets in env dumps; optional Vault/1Password loader | A secret store (optional) | S |
-| [G5](https://github.com/dr-stutters/stutters-mcp-core/issues/22) | **Observability**: structured logs, `/metrics` (Prometheus: calls, errors, latency, upstream status, rate-limit waits), request ids end to end | A Prometheus scraper (optional) | S |
-| [G6](https://github.com/dr-stutters/stutters-mcp-core/issues/23) | **Support matrix + compatibility tests**: at least two versions per product (e.g. ISE 3.3/3.4/3.5, FMC 7.4/7.6/10.0, CatC 2.3.7/3.1, CML 2.8–2.10) | Labs on each version (lab/CML/customer) | L |
-| [G7](https://github.com/dr-stutters/stutters-mcp-core/issues/24) | **Safety rails for production**: dry-run-only mode, change-window guard (`MCP_CHANGE_WINDOW`), per-tool deny-list, max blast radius (devices per deploy), two-person confirm (optional) | — | M |
-| [G8](https://github.com/dr-stutters/stutters-mcp-core/issues/25) | **Security review + dependency/SBOM scanning** in CI (pip-audit, Trivy on images), signed images (cosign) | GitHub Actions | S |
-| [G9](https://github.com/dr-stutters/stutters-mcp-core/issues/26) | **Public release checklist**: scrub history for lab data, docs site, CONTRIBUTING/SECURITY.md, PyPI trusted publishing, drop `CORE_READ_TOKEN` | PyPI account | M |
-| G10 | **Multi-instance support** (several ISE/FMC/CatC targets per server, selected per call) | — | M |
+| ✅ [G1](https://github.com/dr-stutters/stutters-mcp-core/issues/18) | **OAuth 2.1 for HTTP** (FastMCP auth; GitHub or customer IdP), keeping named bearer tokens for automation (✅ v0.8.0: GitHub/OIDC via FastMCP OAuth proxy + named tokens; app registration steps in docs/PRODUCTION.md (owner)) | An IdP app registration; public HTTPS if used with Claude Desktop connectors | M |
+| ✅ [G2](https://github.com/dr-stutters/stutters-mcp-core/issues/19) | **Per-user roles** (`ro` / `rw` / `admin`) mapped to tiers; the identity shows in previews and the audit log (✅ v0.6.0) | — | M |
+| ✅ [G3](https://github.com/dr-stutters/stutters-mcp-core/issues/20) | **Least-privilege account guides** per product, tested: ISE custom admin roles (ERS operator, MnT), FMC custom user role, CatC custom role (RBAC), CML non-admin (✅ core part v0.8.1: docs/least-privilege-template.md + `testing.least_privilege`; per-product guides are server items) | Customer creates the accounts | M |
+| ✅ [G4](https://github.com/dr-stutters/stutters-mcp-core/issues/21) | **Secrets**: `*_PASSWORD_FILE` / Docker secrets everywhere (✅ core `<VAR>_FILE` for every secret setting, v0.4.0; servers' compose files still to adopt); no secrets in env dumps; optional Vault/1Password loader (✅ v0.7.0: `<VAR>_FILE`/`_REF` loaders, Docker-secrets compose override, scrubbing in logs/status/errors) | A secret store (optional) | S |
+| ✅ [G5](https://github.com/dr-stutters/stutters-mcp-core/issues/22) | **Observability**: structured logs, `/metrics` (Prometheus: calls, errors, latency, upstream status, rate-limit waits), request ids end to end (✅ v0.7.0: `/metrics` (bearer or loopback listener)) | A Prometheus scraper (optional) | S |
+| ⏸ [G6](https://github.com/dr-stutters/stutters-mcp-core/issues/23) | **Support matrix + compatibility tests**: at least two versions per product (e.g. ISE 3.3/3.4/3.5, FMC 7.4/7.6/10.0, CatC 2.3.7/3.1, CML 2.8–2.10) (skipped overnight 2: needs older product versions) | Labs on each version (lab/CML/customer) | L |
+| ✅ [G7](https://github.com/dr-stutters/stutters-mcp-core/issues/24) | **Safety rails for production**: dry-run-only mode, change-window guard (`MCP_CHANGE_WINDOW`), per-tool deny-list, max blast radius (devices per deploy), two-person confirm (optional) (✅ v0.5.0) | — | M |
+| ✅ [G8](https://github.com/dr-stutters/stutters-mcp-core/issues/25) | **Security review + dependency/SBOM scanning** in CI (pip-audit, Trivy on images), signed images (cosign) (✅ v0.7.0/v0.8.1: pip-audit, Trivy, SBOMs; cosign ready, off pending the key decision) | GitHub Actions | S |
+| [G9](https://github.com/dr-stutters/stutters-mcp-core/issues/26) | **Public release checklist**: scrub history for lab data, docs site, CONTRIBUTING/SECURITY.md, PyPI trusted publishing, drop `CORE_READ_TOKEN` (groundwork ✅ v0.10.0: SECURITY/CONTRIBUTING, docs/PUBLIC-RELEASE.md, `scrub_check`; history rewrite, PyPI, visibility need the owner) | PyPI account | M |
+| ✅ [G10](https://github.com/dr-stutters/stutters-mcp-core/issues/27) | **Multi-instance support** (several ISE/FMC/CatC targets per server, selected per call) (✅ v0.9.0, ADR-004: `<P>_INSTANCES` + `instance` argument) | — | M |
 
 ## Prerequisites to unblock (ranked by items unblocked)
 

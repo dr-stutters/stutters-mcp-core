@@ -9,8 +9,8 @@ Shared [FastMCP](https://gofastmcp.com) foundation for a family of network-platf
 | [catc-mcp-server](https://github.com/dr-stutters/catc-mcp-server) | Cisco Catalyst Center |
 | [fmc-mcp-server](https://github.com/dr-stutters/fmc-mcp-server) | Cisco Secure Firewall Management Center |
 
-> Status: 0.1.0. See [docs/BUILDING-A-SERVER.md](docs/BUILDING-A-SERVER.md) to build a server, and
-> [docs/PLAN.md](docs/PLAN.md) for the design and roadmap.
+> Status: 0.11.0 (see [CHANGELOG.md](CHANGELOG.md)). See [docs/BUILDING-A-SERVER.md](docs/BUILDING-A-SERVER.md) to
+> build a server, [docs/PRODUCTION.md](docs/PRODUCTION.md) for the operator controls, and [ROADMAP.md](ROADMAP.md).
 
 ## What lives here
 
@@ -20,6 +20,12 @@ preview-first write guard, async task poller, OpenAPI spec search tools, audit l
 test helpers: tool and prompt contract linters plus the prompt test kit (manifests exported with
 `<server> tools --json`, cross-server reference checks, prompt snapshots). Product-specific code lives in each server repo.
 
+Production controls, all opt-in ([docs/PRODUCTION.md](docs/PRODUCTION.md)): safety rails (dry-run, change
+windows, deny/allow lists, blast-radius limits, two-person confirm), per-user roles, OAuth 2.1 next to named
+tokens, secret files/loaders and log scrubbing, Prometheus `/metrics`, several appliances per server with
+per-instance write rules, per-caller rate limits, audit-log rotation and MCP background tasks. Supply chain:
+[docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md); security policy: [SECURITY.md](SECURITY.md).
+
 ## Using it from a server
 
 ```toml
@@ -27,7 +33,7 @@ test helpers: tool and prompt contract linters plus the prompt test kit (manifes
 dependencies = ["stutters-mcp-core"]
 
 [tool.uv.sources]
-stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.1.0" }
+stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.11.0" }
 ```
 
 CI for a server:
