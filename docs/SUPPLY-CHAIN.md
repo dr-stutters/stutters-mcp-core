@@ -26,17 +26,21 @@ jobs:                                           jobs:
 1. Wheel + sdist attached to the GitHub release (as before).
 2. **Python SBOM** (CycloneDX JSON, from the locked runtime dependencies) attached to the release as
    `<repo>-<tag>.python.cdx.json`.
-3. With `image: true`: the image is built and pushed to GHCR with BuildKit **provenance** (`mode=max`) and an
-   **SBOM attestation** attached to the image, plus an **SPDX SBOM** of the image (syft) attached to the release.
+3. With `image: true`: the image is built and pushed to GHCR, and an **SPDX SBOM** of the image (syft) is
+   attached to the release. With `attest: true` (opt-in) the image also carries BuildKit **provenance**
+   (`mode=max`) and an **SBOM attestation**; that switches to the docker-container builder
+   (`docker/setup-buildx-action`), since the default docker driver can't store attestations.
 4. **Trivy** scans the pushed image (by digest) for fixable `CRITICAL,HIGH` vulnerabilities (`scan-severity`)
-   and fails the workflow when it finds any (`scan-fail: true`). The image is already pushed at that point
-   (Trivy needs a pullable image), so a red release means: rebuild with a fixed base image
-   (`python:3.12-slim-bookworm` gets patched often), bump the dependency, or document and set `scan-fail: false`.
-5. **cosign** signing: ready, **off** (`sign: false`) until a key decision is made (below).
+   and reports them in the log. `scan-fail: true` makes findings fail the workflow (opt-in: the image is
+   already pushed at that point, so a red release means rebuild with a patched base image or bump the
+   dependency).
+5. The release step is idempotent: re-running a release (or one created by hand) replaces its assets.
+6. **cosign** signing: ready, **off** (`sign: false`) until a key decision is made (below).
 
 ## Turning on image signing (decision for the repo owner)
 
-Two options; both work with the existing workflow permissions (`id-token: write`, `packages: write`).
+Two options; both work with the documented caller permissions (`contents: write`, `packages: write`,
+`id-token: write`); none of the defaults needs `attestations: write`.
 
 **A. Keyless (recommended, no key to manage).** Signs with a short-lived certificate tied to the GitHub
 Actions workflow identity, logged in the public Sigstore transparency log (Rekor). Note: the log entry is

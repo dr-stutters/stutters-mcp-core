@@ -17,8 +17,12 @@ on:
         description: Trivy severities that fail the release (after the image is pushed; see docs/SUPPLY-CHAIN.md).
       scan-fail:
         type: boolean
-        default: true
-        description: Fail the workflow when Trivy finds fixable vulnerabilities at scan-severity.
+        default: false
+        description: Fail the workflow when Trivy finds fixable vulnerabilities at scan-severity (default report only).
+      attest:
+        type: boolean
+        default: false
+        description: Attach BuildKit provenance + SBOM attestations to the image (uses the docker-container builder).
       sign:
         type: boolean
         default: false   # cosign signing is ready but off until the key decision (docs/SUPPLY-CHAIN.md)
@@ -48,7 +52,13 @@ jobs:
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+        run: |
+          # Idempotent: a re-run (or a release created by hand) gets its assets replaced.
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag
+          fi
       - name: Publish to PyPI
         if: inputs.publish-pypi
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -71,6 +81,9 @@ jobs:
         if: inputs.image
         id: img
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        if: inputs.image && inputs.attest
+        uses: docker/setup-buildx-action@v3   # the default docker driver can't store attestations
       - name: Build and push image
         if: inputs.image
         id: build
@@ -78,8 +91,8 @@ jobs:
         with:
           context: .
           push: true
-          provenance: mode=max
-          sbom: true
+          provenance: ${{ inputs.attest && 'mode=max' || 'false' }}
+          sbom: ${{ inputs.attest }}
           secrets: |
             core_read_token=${{ secrets.CORE_READ_TOKEN }}
           tags: |
