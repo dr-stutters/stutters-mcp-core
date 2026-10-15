@@ -72,37 +72,45 @@ class RoleMap:
     default: Role = Role.RO
 
     @classmethod
-    def parse(cls, spec: str, default: str = "ro") -> RoleMap:
+    def parse(cls, spec: str, default: str = "ro", *, file_spec: str | None = None) -> RoleMap:
+        """`spec` is MCP_ROLES (comma or newline separated); `file_spec` the MCP_ROLES_FILE text."""
         entries: list[tuple[str, Role]] = []
         seen: set[str] = set()
-        for position, raw in enumerate(re.split(r"[,\n]", spec), start=1):
-            entry = raw.split("#", 1)[0].strip()
-            if not entry:
-                continue
-            name, sep, role = entry.rpartition(":")
-            name = name.strip()
-            if not sep or not name:
-                raise ValueError(
-                    f"MCP_ROLES entry #{position} must look like 'name:role' (role ro, rw or admin)"
-                )
-            if not _PATTERN_RE.match(name):
-                raise ValueError(f"MCP_ROLES entry #{position}: {name!r} is not a caller name or glob")
-            if name in seen:
-                raise ValueError(f"MCP_ROLES: {name!r} is listed twice")
-            seen.add(name)
-            entries.append((name, _role(role, f"MCP_ROLES entry {name!r}")))
+        sources = [(spec, "MCP_ROLES entry #{n}", r"[,\n]")]
+        if file_spec is not None:
+            sources.append((file_spec, "MCP_ROLES_FILE line {n}", r"\n"))
+        for text, label, sep_re in sources:
+            for position, raw in enumerate(re.split(sep_re, text), start=1):
+                where = label.format(n=position)
+                entry = raw.split("#", 1)[0].strip()
+                if not entry:
+                    continue
+                name, sep, role = entry.rpartition(":")
+                name = name.strip()
+                if not sep or not name:
+                    raise ValueError(f"{where} must look like 'name:role' (role ro, rw or admin)")
+                if not _PATTERN_RE.match(name):
+                    raise ValueError(f"{where}: {name!r} is not a caller name or glob")
+                if name in seen:
+                    raise ValueError(f"{where}: {name!r} is listed twice")
+                seen.add(name)
+                entries.append((name, _role(role, where)))
         return cls(tuple(entries), _role(default, "MCP_DEFAULT_ROLE"))
 
     def role_for(self, caller: str) -> Role:
+        """An exact entry; else `admin` for the stdio caller `local` (a name no token can have); else the
+        most specific matching glob (most literal characters; on a tie, the lower role); else the default."""
         for name, role in self.entries:
             if name == caller:
                 return role
         if caller == LOCAL:
             return Role.ADMIN
-        for name, role in self.entries:
-            if fnmatch.fnmatchcase(caller, name):
-                return role
-        return self.default
+        matches = [(name, role) for name, role in self.entries if fnmatch.fnmatchcase(caller, name)]
+        if not matches:
+            return self.default
+        order = list(Role)
+        best = max(matches, key=lambda m: (len(re.sub(r"[*?\[\]!]", "", m[0])), -order.index(m[1])))
+        return best[1]
 
     def allows(self, caller: str, tier: str | None) -> bool:
         # A tool registered outside ToolRegistrar has no known tier: only admin may call it.
@@ -125,14 +133,16 @@ class RoleMiddleware(Middleware):
         self.mcp = mcp
 
     def _tool_tier(self, name: str) -> str | None:
-        if name.endswith("_review_change"):
-            return "write"  # only someone who could approve a change may inspect pending ones
+        override = getattr(self.mcp, "_stutters_role_tiers", {}).get(name)
+        if override is not None:
+            return str(override)  # e.g. <prefix>_review_change: only approvers may inspect pending changes
         tier = getattr(self.mcp, "_stutters_tiers", {}).get(name)
         return tier.value if tier is not None else None
 
     def _prompt_tier(self, name: str) -> str | None:
         meta = getattr(self.mcp, "_stutters_prompts", {}).get(name)
-        return meta.get("tier") if meta else None
+        # A prompt registered outside PromptRegistrar has no declared tier: admin only (fail closed).
+        return meta.get("tier") if meta else "dangerous"
 
     async def on_list_tools(
         self,
@@ -171,7 +181,7 @@ class RoleMiddleware(Middleware):
     ) -> Sequence[Prompt]:
         prompts = await call_next(context)
         caller = current_caller()
-        return [p for p in prompts if self.roles.allows(caller, self._prompt_tier(p.name) or "read")]
+        return [p for p in prompts if self.roles.allows(caller, self._prompt_tier(p.name))]
 
     async def on_get_prompt(
         self,
@@ -179,7 +189,7 @@ class RoleMiddleware(Middleware):
         call_next: CallNext[mt.GetPromptRequestParams, Any],
     ) -> Any:
         caller = current_caller()
-        tier = self._prompt_tier(context.message.name) or "read"
+        tier = self._prompt_tier(context.message.name) or "dangerous"
         if not self.roles.allows(caller, tier):
             role = self.roles.role_for(caller)
             raise PromptError(

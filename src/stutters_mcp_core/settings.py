@@ -223,8 +223,7 @@ class BaseServerSettings(BaseSettings):
         from stutters_mcp_core.policy import SafetyPolicy
 
         SafetyPolicy.from_settings(self)  # raises ValueError naming the bad setting
-        if self.mcp_roles is not None:
-            self.role_map()  # MCP_ROLES_FILE is read (and checked) at startup by the server
+        self.role_map()  # also reads and checks MCP_ROLES_FILE
         return self
 
     def role_map(self) -> Any:
@@ -233,15 +232,15 @@ class BaseServerSettings(BaseSettings):
 
         if self.mcp_roles is None and self.mcp_roles_file is None:
             return None
-        spec = self.mcp_roles or ""
+        file_spec = None
         if self.mcp_roles_file is not None:
             try:
-                spec += "\n" + self.mcp_roles_file.read_text()
+                file_spec = self.mcp_roles_file.read_text()
             except OSError as e:
                 raise ValueError(
                     f"MCP_ROLES_FILE: cannot read {self.mcp_roles_file}: {e.strerror or e}"
                 ) from None
-        return RoleMap.parse(spec, self.mcp_default_role)
+        return RoleMap.parse(self.mcp_roles or "", self.mcp_default_role, file_spec=file_spec)
 
     def safety_policy(self) -> Any:
         """The parsed safety rails (stutters_mcp_core.policy.SafetyPolicy)."""

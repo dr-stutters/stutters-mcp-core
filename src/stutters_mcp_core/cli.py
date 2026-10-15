@@ -34,7 +34,7 @@ CreateServer = Callable[..., FastMCP[Any]]
 
 def _token_command(prog: str, name: str) -> None:
     if not valid_token_name(name):
-        sys.exit(f"{prog}: token name may only contain letters, digits and _ . @ -")
+        sys.exit(f"{prog}: token name may only contain letters, digits and _ . @ - ('local' is reserved)")
     token = generate_token()
     print(f"Bearer token for {name!r} (give this to the user; it is not stored anywhere):\n")
     print(f"  {token}\n")

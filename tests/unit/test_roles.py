@@ -63,7 +63,7 @@ def test_roles_file(tmp_path: Path) -> None:
     roles = make_settings(mcp_roles_file=f, mcp_roles="carol:rw").role_map()
     assert roles.role_for("bob") is Role.RW and roles.role_for("carol") is Role.RW
     with pytest.raises(ValueError, match="MCP_ROLES_FILE"):
-        make_settings(mcp_roles_file=tmp_path / "missing").role_map()
+        make_settings(mcp_roles_file=tmp_path / "missing")
     assert make_settings().role_map() is None
 
 
@@ -122,3 +122,34 @@ async def test_review_change_needs_write_role(api: Any) -> None:
     server = create_server(make_settings(mcp_roles=ROLES, mcp_two_person_tools="@dangerous", **RWD))
     assert "demo_review_change" not in await tool_names(server, "ci-x")
     assert "demo_review_change" in await tool_names(server, "bob")
+
+
+def test_glob_specificity_and_reserved_local() -> None:
+    from stutters_mcp_core.inbound_auth import parse_tokens, valid_token_name
+
+    m = RoleMap.parse("*:admin, ci-*:ro, ops-*:rw, ops-?:ro")
+    assert m.role_for("ci-x") is Role.RO  # more specific than *
+    assert m.role_for("ops-a") is Role.RO  # tie between ops-* and ops-? (3 literals): lower role
+    assert m.role_for("someone") is Role.ADMIN
+    assert not valid_token_name("local") and not valid_token_name("LOCAL")
+    with pytest.raises(ValueError, match="reserved"):
+        parse_tokens("local:" + "x" * 30)
+
+
+def test_roles_file_errors_name_the_line(tmp_path: Path) -> None:
+    f = tmp_path / "roles"
+    f.write_text("alice:admin\n# c\nbob\n")
+    with pytest.raises(ValueError, match="MCP_ROLES_FILE line 3"):
+        make_settings(mcp_roles_file=f)
+
+
+async def test_unregistered_prompt_is_admin_only(api: Any) -> None:
+    server = create_server(make_settings(mcp_roles=ROLES))
+
+    @server.prompt(name="demo_raw_prompt")
+    def raw() -> str:
+        return "x"
+
+    async with Client(server) as c:
+        with as_caller("ci-x"):
+            assert "demo_raw_prompt" not in {p.name for p in await c.list_prompts()}

@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
   audit event carries `role`. Off by default; the stdio caller `local` is `admin` unless named.
 - `<prefix>_review_change` needs `rw` or `admin` when roles are on. The HTTP startup log lists each token's role.
 
+### Changed
+- `local` is a reserved token name (it is the stdio caller's identity): `MCP_AUTH_TOKENS` and `<server> token`
+  refuse it.
+
 ### Adopting (server builders)
 - Bump the pin to `tag = "v0.6.0"`. No code changes needed: roles are an operator setting and gate tiers
   through `ToolRegistrar`'s tier registry. Tools you register with `mcp.tool(...)` directly (bypassing

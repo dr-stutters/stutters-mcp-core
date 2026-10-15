@@ -248,7 +248,12 @@ def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
         "Changes nothing and does not use up the token."
     )
 
-    @reg.read(title="Review a pending change", name=f"{spec.prefix}_review_change", description=description)
+    name = f"{spec.prefix}_review_change"
+    overrides: dict[str, str] = getattr(reg.mcp, "_stutters_role_tiers", {})
+    overrides[name] = "write"  # with per-user roles: only callers who could approve may review
+    reg.mcp._stutters_role_tiers = overrides  # type: ignore[attr-defined]
+
+    @reg.read(title="Review a pending change", name=name, description=description)
     async def review_change(
         ctx: Context,
         token: Annotated[str, Field(description="The confirm token from the requester's preview (pv_...)")],

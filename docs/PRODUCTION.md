@@ -71,11 +71,16 @@ Map caller identities to roles; each role unlocks tool tiers. Off unless `MCP_RO
 | `admin` | read, write, dangerous |
 
 - The identity is the bearer-token name from `MCP_AUTH_TOKENS` (or `<provider>:<login>` with OAuth). An
-  exact name wins over globs; then the first matching glob; then `MCP_DEFAULT_ROLE`.
-- The stdio caller (`local`) is `admin` unless an entry names it: it is the operator's own process.
+  exact name wins; then the most specific matching glob (most literal characters; on a tie the lower role),
+  so `*:ro, ops-*:admin` gives `ops-amy` admin and everyone else ro; then `MCP_DEFAULT_ROLE`.
+- The stdio caller (`local`) is `admin` unless an entry names it: it is the operator's own process. `local`
+  is a reserved name no bearer token can use.
 - Roles only narrow: the server's `MCP_ENABLE_WRITES` / `MCP_ENABLE_DANGEROUS` still decide what exists.
 - Tools above a caller's role are hidden from their tool list and refused if called (audit event `denied`).
-  Prompts follow their declared tier. A tool registered outside `ToolRegistrar` (no known tier) needs `admin`.
+  Prompts follow their declared tier. A tool or prompt registered outside the core registrars (no known
+  tier) needs `admin`.
+- `<prefix>_api_call` is one dangerous-tier tool (it can send any method), so with writes on it is `admin`
+  only; `ro` and `rw` callers use the curated tools and `<prefix>_search_spec` / `<prefix>_get_definition`.
 - Identity and role are shown in previews (`requested_by: {caller, role}`), in `<prefix>_status`
   (`server.access`: your identity and role, the default role, the number of entries) and in every audit
   event (`role`). At HTTP startup the log lists each token name with its role.
