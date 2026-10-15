@@ -251,3 +251,48 @@ async def test_ok_status_returns_instead_of_raising() -> None:
     async with ApiClient(BASE, retries=0) as c:
         resp = await c.get("/mnt", ok_status={500}, expect="response")
     assert resp.status_code == 500 and "34110" in resp.text
+
+
+@respx.mock
+async def test_max_page_override_per_call() -> None:
+    from stutters_mcp_core.http import fetch_all
+
+    data = list(range(60))
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        off, lim = int(request.url.params["offset"]), int(request.url.params["limit"])
+        sizes.append(lim)
+        return httpx.Response(200, json={"response": data[off - 1 : off - 1 + lim]})
+
+    respx.get(f"{BASE}/l").mock(side_effect=handler)
+    pager = OffsetLimit(items="response", one_based=True, max_page=500)
+    async with ApiClient(BASE) as c:
+        page = await pager.fetch_page(c, "/l", limit=50, offset=5, max_page=20)
+        assert page.items == list(range(5, 55)) and sizes == [20, 20, 10]
+        sizes.clear()
+        await pager.fetch_page(c, "/l", limit=50)  # the pager's own cap is unchanged
+        assert sizes == [50]
+        sizes.clear()
+        everything = await fetch_all(pager, c, "/l", max_page=25)
+        assert everything.items == data and everything.complete and sizes == [25, 25, 25]
+        with pytest.raises(ValueError, match="max_page"):
+            await pager.fetch_page(c, "/l", limit=5, max_page=0)
+
+
+@respx.mock
+async def test_page_number_max_page_override() -> None:
+    data = list(range(7))
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        p, s = int(request.url.params["page"]), int(request.url.params["size"])
+        sizes.append(s)
+        return httpx.Response(200, json={"r": data[(p - 1) * s : p * s], "t": 7})
+
+    respx.get(f"{BASE}/e").mock(side_effect=handler)
+    async with ApiClient(BASE) as c:
+        page = await PageNumber(items="r", total="t", max_size=100).fetch_page(
+            c, "/e", limit=4, offset=2, max_page=2
+        )
+        assert page.items == [2, 3, 4, 5] and sizes == [2, 2]
