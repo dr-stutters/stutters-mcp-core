@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, ClassVar, Literal, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic.fields import FieldInfo
@@ -137,6 +137,9 @@ class BaseServerSettings(BaseSettings):
     retries: int = Field(default=2, ge=0, le=10)
     rate_limit: float | None = Field(default=None, gt=0, description="max requests per minute")
     max_concurrency: int | None = Field(default=None, ge=1)
+    # Fields a named instance never inherits from the default instance (G10), beyond URL, credentials,
+    # TLS checking and secrets; products list appliance-specific ones, e.g. {"domain"} for FMC.
+    per_instance_fields: ClassVar[frozenset[str]] = frozenset()
     # Several appliances (G10, ADR-004): <P>_INSTANCES=prod,dr adds instances read from <P>_PROD_URL, ...
     instances: str | None = None
     default_instance: str = "default"
@@ -345,7 +348,7 @@ class BaseServerSettings(BaseSettings):
         return RoleMap.parse(self.mcp_roles or "", self.mcp_default_role, file_spec=file_spec)
 
     def target_names(self) -> list[str]:
-        """[default target, *<P>_TARGETS]; a single entry means single-target (the normal case)."""
+        """[default instance, *<P>_INSTANCES]; a single entry means single-instance (the normal case)."""
         from stutters_mcp_core.targets import parse_target_names
 
         return parse_target_names(self.instances, self.default_instance)

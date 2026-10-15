@@ -28,14 +28,15 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 ARGUMENT = "instance"  # the tool argument ("target" is already a parameter of several tools)
 TARGET_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-# Settings a named target never inherits from the default target: where to connect and as whom.
-NOT_INHERITED = frozenset({"url", "username", "password", "token"})
+# Settings a named instance never inherits from the default instance: where to connect, as whom, and how
+# the TLS connection is checked. Every SecretStr field and a product's `per_instance_fields` are added.
+NOT_INHERITED = frozenset({"url", "username", "password", "token", "verify_ssl", "ca_bundle"})
 
 current_target: ContextVar[str | None] = ContextVar("stutters_target", default=None)
 
 
 def parse_target_names(spec: str | None, default: str) -> list[str]:
-    """[default, *named] from `<P>_TARGETS`."""
+    """[default, *named] from `<P>_INSTANCES`."""
     names = [default]
     for raw in re.split(r"[,\s]+", spec or ""):
         name = raw.strip().lower()
@@ -52,27 +53,37 @@ def parse_target_names(spec: str | None, default: str) -> list[str]:
 
 
 def target_settings(base: BaseServerSettings, name: str) -> BaseServerSettings:
-    """Settings for named target `name`: the same class read with prefix `<P><NAME>_`, inheriting every
-    unset field except url and credentials from the default target."""
+    """Settings for named instance `name`: the same class read with prefix `<P><NAME>_`. Fields the instance
+    doesn't set are inherited from the default instance, except URL, credentials, TLS checking, every
+    secret, and the product's `per_instance_fields`; the merged result is validated as a whole."""
+    from stutters_mcp_core.settings import _is_secret
+
     cls = type(base)
     prefix = str(cls.model_config.get("env_prefix", ""))
     sub_prefix = f"{prefix}{name.upper()}_"
-    sub_cls = type(
-        f"{cls.__name__}_{name}", (cls,), {"model_config": {**cls.model_config, "env_prefix": sub_prefix}}
-    )
+    config = {**cls.model_config, "env_prefix": sub_prefix}
+    sub_cls = type(f"{cls.__name__}_{name}", (cls,), {"model_config": config})
+    env_file = cls.model_config.get("env_file")
     try:
-        sub = sub_cls(_env_file=cls.model_config.get("env_file"))
+        own = sub_cls(_env_file=env_file).model_fields_set  # what the instance sets itself
     except ValueError as e:
         raise ValueError(f"instance {name!r} (variables {sub_prefix}*): {e}") from None
+    keep = NOT_INHERITED | frozenset(getattr(cls, "per_instance_fields", frozenset()))
     inherit = {
         field: getattr(base, field)
-        for field in cls.model_fields
-        if field not in sub.model_fields_set
-        and field not in NOT_INHERITED
+        for field, info in cls.model_fields.items()
+        if field not in own
+        and field not in keep
+        and not _is_secret(info.annotation)
         and not field.startswith("mcp_")
         and field not in ("instances", "default_instance")
+        and field in base.model_fields_set
     }
-    result: BaseServerSettings = sub.model_copy(update={**inherit, "instances": None})
+    try:
+        merged = sub_cls(_env_file=env_file, **inherit, instances=None)
+    except ValueError as e:
+        raise ValueError(f"instance {name!r} (variables {sub_prefix}*): {e}") from None
+    result: BaseServerSettings = merged
     return result
 
 
@@ -82,8 +93,10 @@ def target_name() -> str | None:
 
 
 class TargetState(dict[str, Any]):
-    """Lifespan state whose per-appliance entries ("client", "settings", "specs") follow the target
-    selected for the current call."""
+    """Lifespan state whose per-appliance entries ("client", "settings", "specs") follow the instance
+    selected for the current call. Only `state[key]`, `state.get(key)` and `key in state` are routed;
+    iteration, `items()`, `copy()` and `{**state}` see the shared entries only, so tools must look
+    entries up by key (get_client / get_settings)."""
 
     PER_TARGET = ("client", "settings", "specs")
 
@@ -106,7 +119,7 @@ class TargetState(dict[str, Any]):
         return super().get(key, default)
 
     def __contains__(self, key: object) -> bool:
-        if key in self.PER_TARGET:
+        if isinstance(key, str) and key in self.PER_TARGET:
             return key in self._bucket()
         return super().__contains__(key)
 
@@ -116,10 +129,17 @@ class TargetState(dict[str, Any]):
 
 
 def with_target_argument(fn: F, names: list[str], default: str) -> F:  # noqa: UP047
-    """Wrap a tool so it takes an optional `target` (one of `names`) and runs with that target selected."""
+    """Wrap a tool so it takes an optional `instance` (one of `names`) and runs with it selected. Sync tools
+    stay sync (FastMCP runs them in a worker thread, which inherits the context variable)."""
     import typing
 
-    hints = typing.get_type_hints(fn, include_extras=True)
+    try:
+        hints = typing.get_type_hints(fn, include_extras=True)
+    except Exception as e:  # noqa: BLE001 - e.g. TYPE_CHECKING-only names under postponed annotations
+        raise ValueError(
+            f"{fn.__name__}: can't resolve its type hints for the multi-instance wrapper ({e}); "
+            "import the annotated types at module level"
+        ) from None
     sig = inspect.signature(fn)
     sig = sig.replace(
         parameters=[p.replace(annotation=hints.get(n, p.annotation)) for n, p in sig.parameters.items()],
@@ -135,27 +155,38 @@ def with_target_argument(fn: F, names: list[str], default: str) -> F:  # noqa: U
         Field(description=f"Which appliance instance to use: {', '.join(names)} (default: {default})."),
     ]
 
-    @functools.wraps(fn)
-    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def select(kwargs: dict[str, Any]) -> Any:
         target = kwargs.pop(ARGUMENT, None)
-        if target is not None and target not in names:
+        if target is not None and target not in names:  # FastMCP validates the enum first; direct calls
             raise InvalidRequest(f"Unknown instance {target!r}; configured: {', '.join(names)}")
-        token = current_target.set(target or default)
-        try:
-            result = fn(*args, **kwargs)
-            if inspect.isawaitable(result):
-                result = await result
-            return result
-        finally:
-            current_target.reset(token)
+        return current_target.set(target or default)
+
+    wrapper: Callable[..., Any]
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            token = select(kwargs)
+            try:
+                return await fn(*args, **kwargs)
+            finally:
+                current_target.reset(token)
+
+        wrapper = async_wrapper
+    else:
+
+        @functools.wraps(fn)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            token = select(kwargs)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                current_target.reset(token)
+
+        wrapper = sync_wrapper
 
     param = inspect.Parameter(ARGUMENT, inspect.Parameter.KEYWORD_ONLY, default=None, annotation=annotation)
-    params = list(sig.parameters.values())
-    # keep **kwargs last if present
-    if params and params[-1].kind is inspect.Parameter.VAR_KEYWORD:
-        params.insert(len(params) - 1, param)
-    else:
-        params.append(param)
-    wrapper.__signature__ = sig.replace(parameters=params)  # type: ignore[attr-defined]
+    params = [*sig.parameters.values(), param]
+    wrapper.__signature__ = sig.replace(parameters=params)  # type: ignore[union-attr]
     wrapper.__annotations__ = {**hints, ARGUMENT: annotation}
     return wrapper  # type: ignore[return-value]

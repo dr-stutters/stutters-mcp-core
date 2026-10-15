@@ -65,7 +65,8 @@ async def test_target_inherits_non_credentials(two: Any) -> None:
     base = make_settings(instances="prod", timeout=12.5, verify_ssl=False)
     prod = target_settings(base, "prod")
     assert prod.url == PROD and prod.username == "produser" and prod.password_value() == "prodpass"
-    assert prod.timeout == 12.5 and prod.verify_ssl is False  # inherited
+    assert prod.timeout == 12.5  # inherited
+    assert prod.verify_ssl is True  # TLS checking is per instance
     assert prod.retries == 0  # its own
 
 
@@ -112,3 +113,54 @@ async def test_check_command_reports_each_target(two: Any, capsys: pytest.Captur
 async def test_spec_tools_follow_target(two: Any) -> None:
     out = await call_tool(multi(), "demo_search_spec", {"query": "items", "instance": "prod"})
     assert out
+
+
+async def test_secrets_tls_and_product_fields_not_inherited(
+    two: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import SecretStr
+
+    from stutters_mcp_core import server_config
+    from stutters_mcp_core.settings import BaseServerSettings
+    from stutters_mcp_core.targets import target_settings
+
+    class S(BaseServerSettings):
+        model_config = server_config("DEMO_")
+        per_instance_fields = frozenset({"domain"})
+        shared_secret: SecretStr | None = None
+        domain: str | None = None
+        page_size: int = 100
+
+    base = S(
+        _env_file=None,  # type: ignore[call-arg]
+        url=BASE,
+        instances="prod",
+        verify_ssl=False,
+        shared_secret="LABSECRET",
+        domain="Global/Lab",
+        page_size=50,
+    )
+    prod = target_settings(base, "prod")
+    assert prod.shared_secret is None and prod.domain is None  # type: ignore[attr-defined]
+    assert prod.verify_ssl is True  # TLS checking is never inherited
+    assert prod.page_size == 50  # type: ignore[attr-defined]  # ordinary options are
+
+
+async def test_sync_tool_keeps_running_in_a_thread(two: Any) -> None:
+    import threading
+
+    from fastmcp import FastMCP
+
+    from stutters_mcp_core.targets import target_name, with_target_argument
+
+    seen: dict[str, Any] = {}
+
+    def demo_sync(x: int = 1) -> dict[str, Any]:
+        seen["thread"] = threading.current_thread() is threading.main_thread()
+        return {"instance": target_name(), "x": x}
+
+    mcp: FastMCP[Any] = FastMCP("t")
+    mcp.tool(with_target_argument(demo_sync, ["lab", "prod"], "lab"), name="demo_sync")
+    async with Client(mcp) as c:
+        out = (await c.call_tool("demo_sync", {"instance": "prod"})).structured_content
+    assert out == {"instance": "prod", "x": 1} and seen["thread"] is False

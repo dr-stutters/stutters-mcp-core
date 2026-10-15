@@ -115,7 +115,7 @@ class ToolRegistrar:
         mcp._stutters_withheld = withheld  # type: ignore[attr-defined]
         self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
         self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
-        self.target_names: list[str] = settings.target_names()  # >1: tools get a `target` argument
+        self.target_names: list[str] = settings.target_names()  # >1: tools get an `instance` argument
 
     def _register(
         self,

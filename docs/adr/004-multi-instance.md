@@ -30,7 +30,9 @@ Option 2, opt-in, with single-target behaviour unchanged.
   (named `<P>_DEFAULT_INSTANCE`, default `default`). `<P>_INSTANCES=prod,dr` adds named instances, each read with
   its own prefix `<P>_<NAME>_` (`ISE_PROD_URL`, `ISE_PROD_USERNAME`, `ISE_PROD_PASSWORD(_FILE|_REF)`, product
   fields such as `ISE_PROD_ERS_PORT`). An instance must set its own URL and credentials; any other field it
-  doesn't set is inherited from the default instance (TLS, timeouts, rate limits, product options).
+  doesn't set is inherited from the default instance (timeouts, retries, rate limits, product options),
+  except TLS checking (`VERIFY_SSL`, `CA_BUNDLE`), every secret, and the fields a product lists in
+  `Settings.per_instance_fields` (e.g. FMC's domain). The merged settings are validated as a whole.
   `MCP_*` server settings are global.
 - **Selection.** When more than one instance is configured, `ToolRegistrar` wraps every tool with an optional
   `instance` argument (an enum of the configured names; omitted = the default instance) and sets a context
@@ -50,7 +52,12 @@ Option 2, opt-in, with single-target behaviour unchanged.
   state outside the client object (module globals) must move it onto the client.
 - Per-target write policy (e.g. read-only prod, two-person only on prod) and per-target roles are follow-ups;
   until then, run a separate container for a target that needs a different policy.
-- Prompts and manifests are unaffected (tool names don't change); the `target` argument appears in tool
+- Prompts and manifests are unaffected (tool names don't change); the `instance` argument appears in tool
   schemas only when configured.
+- The selection is a context variable: it follows the call into awaited code, `asyncio.create_task`,
+  `anyio`/`asyncio.to_thread`, but not `loop.run_in_executor` or a background task queue (FastMCP tasks);
+  work handed off that way runs against the default instance. Pass the client explicitly there.
+- The lifespan state for several instances is a `TargetState` dict: look entries up by key
+  (`get_client(ctx)`); iterating or copying it shows the shared entries only.
 - A tool that declares its own `instance` parameter can't be wrapped; registration fails loudly when
   instances are configured.

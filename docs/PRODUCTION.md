@@ -280,8 +280,8 @@ ISE_INSTANCES=prod,dr                  # more instances, each with its own prefi
 ISE_PROD_URL=https://ise-prod.example
 ISE_PROD_USERNAME=mcp-ro
 ISE_PROD_PASSWORD_FILE=/run/secrets/ise_prod_password   # _FILE / _REF work per instance
-ISE_PROD_VERIFY_SSL=true               # anything not set is inherited from the default instance,
-                                       # except URL and credentials
+ISE_PROD_CA_BUNDLE=/certs/prod-ca.pem  # TLS checking, secrets, URL and credentials are per instance;
+                                       # other fields not set (timeouts, rate limits...) are inherited
 ```
 
 Every tool then takes an optional `instance` argument (an enum of the names; omitted = the default
