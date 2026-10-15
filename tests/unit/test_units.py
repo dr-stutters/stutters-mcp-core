@@ -315,3 +315,15 @@ def test_swagger2_examples() -> None:
         ][0]["examples"]
         == "none in the spec"
     )
+
+
+def test_list_result_keeps_truncation_note_with_tool_note() -> None:
+    set_max_chars(2000)
+    try:
+        page = Page([{"id": i, "blob": "x" * 200} for i in range(50)], offset=0, total=50)
+        payload: Any = list_result(page, extra={"note": "Stale records hidden."}).structured_content
+        assert "truncated" in payload["note"] and payload["note"].endswith("Stale records hidden.")
+        plain: Any = list_result(Page([{"id": 1}], offset=0, total=1), extra={"note": "x"}).structured_content
+        assert plain["note"] == "x"
+    finally:
+        set_max_chars(40_000)

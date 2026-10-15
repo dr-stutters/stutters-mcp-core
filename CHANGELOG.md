@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-15
+
+### Fixed
+- `list_result(extra={"note": ...})` no longer replaces the "output truncated" warning; both notes are kept
+  (catc request: the model could miss that a list was cut).
+
+### Added
+- `<prefix>_status` reports `server.server_version` (the server package's version; `ServerSpec(version=...)` overrides).
+  Servers that added this themselves can drop their copy. (cml request)
+
 ## [0.12.0] - 2026-10-15
 
 ### Added

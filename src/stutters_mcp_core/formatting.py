@@ -176,6 +176,10 @@ def list_result(
     if truncated:
         meta["note"] = f"Output truncated to fit the size limit; {hint}."
     if extra:
+        extra = dict(extra)
+        # A tool's own note must not hide the truncation warning: keep both.
+        if "note" in meta and "note" in extra and extra["note"] != meta["note"]:
+            extra["note"] = f"{meta['note']} {extra['note']}"
         meta.update(extra)
     if fmt == "markdown":
         header = ", ".join(f"{k}: {v}" for k, v in meta.items())
