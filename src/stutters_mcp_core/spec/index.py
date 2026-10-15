@@ -14,7 +14,9 @@ from typing import Any
 
 from stutters_mcp_core.errors import InvalidRequest
 
-INDEX_FORMAT = 2
+INDEX_FORMAT = 3
+EXAMPLE_CHARS = 3000  # per example, serialised
+DETAIL_CHARS = 2000  # full descriptions
 METHODS = ("get", "post", "put", "patch", "delete")
 
 
@@ -24,6 +26,7 @@ class Param:
     location: str  # query | path | header
     required: bool = False
     summary: str = ""
+    description: str = ""  # full text (summary is cut to one short line)
 
 
 @dataclass
@@ -38,6 +41,8 @@ class Operation:
     request: str | None = None
     response: str | None = None
     deprecated: bool = False
+    description: str = ""  # full operation description
+    examples: dict[str, str] = field(default_factory=dict)  # {"request"|"response": JSON text}
 
 
 @dataclass
@@ -103,9 +108,10 @@ class SpecIndex:
             if _norm_path(op.path) == want and (source is None or op.source == source)
         ]
 
-    def definition(self, name: str, *, source: str | None = None) -> dict[str, Any]:
+    def definition(self, name: str, *, source: str | None = None, examples: bool = False) -> dict[str, Any]:
         """A schema by name, or every operation at a path ('/api/v1/endpoint/{id}' or with a method
-        prefix 'GET /api/...')."""
+        prefix 'GET /api/...'). With `examples`, operations also carry the spec's request/response
+        examples and the full (untruncated) operation and parameter descriptions."""
         name = name.strip()
         if name in self.schemas:
             return {"schema": name, **self.schemas[name]}
@@ -124,6 +130,16 @@ class SpecIndex:
             out: dict[str, Any] = {"path": ops[0].path, "operations": []}
             for op in ops:
                 d = asdict(op)
+                if examples:
+                    if not d["examples"]:
+                        d["examples"] = "none in the spec"
+                else:
+                    d.pop("examples", None)
+                    d.pop("description", None)
+                    for prm in d["params"]:
+                        prm.pop("description", None)
+                if not d.get("description"):
+                    d.pop("description", None)
                 if op.request and op.request in self.schemas:
                     d["request_fields"] = self.schemas[op.request].get("fields", {})
                     d["request_required"] = self.schemas[op.request].get("required", [])
@@ -251,6 +267,35 @@ def _summarise_schema(s: dict[str, Any], schemas: dict[str, Any], source: str) -
     return out
 
 
+def _example_text(value: Any) -> str:
+    import json
+
+    text = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"), default=str)
+    return text if len(text) <= EXAMPLE_CHARS else text[:EXAMPLE_CHARS] + "...(truncated)"
+
+
+def _media_example(media: Any) -> Any:
+    """First example in an OpenAPI 3 media-type object (example, examples{}.value, schema.example)."""
+    if not isinstance(media, dict):
+        return None
+    if "example" in media:
+        return media["example"]
+    exs = media.get("examples")
+    if isinstance(exs, dict):
+        for ex in exs.values():
+            if isinstance(ex, dict) and "value" in ex:
+                return ex["value"]
+    schema = media.get("schema")
+    if isinstance(schema, dict) and "example" in schema:
+        return schema["example"]
+    return None
+
+
+def _detail(text: Any) -> str:
+    t = str(text or "").strip()
+    return t if len(t) <= DETAIL_CHARS else t[:DETAIL_CHARS] + "..."
+
+
 def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: str = "") -> SpecIndex:
     """Index an OpenAPI 3.x or Swagger 2.0 document. `path_prefix` is prepended to every path
     (Swagger 2 `basePath` is applied automatically; OpenAPI 3 server paths are not)."""
@@ -273,6 +318,7 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                 continue
             params: list[Param] = []
             body_schema: Any = None
+            op_examples: dict[str, str] = {}
             for p in [*shared, *(op.get("parameters", []) or [])]:
                 if not isinstance(p, dict):
                     continue
@@ -284,6 +330,14 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                     )
                 if p.get("in") == "body":
                     body_schema = p.get("schema")
+                    for ex in (
+                        p.get("x-examples"),
+                        (body_schema or {}).get("example") if isinstance(body_schema, dict) else None,
+                    ):
+                        if ex is not None and "request" not in op_examples:
+                            if isinstance(ex, dict) and "application/json" in ex:
+                                ex = ex["application/json"]
+                            op_examples["request"] = _example_text(ex)
                     continue
                 if p.get("in") in ("query", "path", "header") and p.get("name"):
                     schema = p.get("schema", p)
@@ -295,6 +349,7 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                             _summarise_prop(
                                 {**schema, "description": p.get("description", schema.get("description", ""))}
                             ),
+                            _detail(p.get("description", schema.get("description", ""))),
                         )
                     )
             if not swagger2:
@@ -302,6 +357,9 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                 for ctype in ("application/json", *content):
                     if ctype in content:
                         body_schema = content[ctype].get("schema")
+                        ex = _media_example(content[ctype])
+                        if ex is not None:
+                            op_examples["request"] = _example_text(ex)
                         break
             resp_schema = None
             for code, r in (op.get("responses") or {}).items():
@@ -309,11 +367,23 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                     continue
                 if swagger2:
                     resp_schema = r.get("schema")
+                    rex = (
+                        (r.get("examples") or {}).get("application/json")
+                        if isinstance(r.get("examples"), dict)
+                        else None
+                    )
+                    if rex is None and isinstance(resp_schema, dict):
+                        rex = resp_schema.get("example")
+                    if rex is not None:
+                        op_examples["response"] = _example_text(rex)
                 else:
                     rc = r.get("content", {}) or {}
                     for ctype in ("application/json", *rc):
                         if ctype in rc:
                             resp_schema = rc[ctype].get("schema")
+                            ex = _media_example(rc[ctype])
+                            if ex is not None:
+                                op_examples["response"] = _example_text(ex)
                             break
                 break
             # Inline request bodies get a synthetic schema so their fields are still describable.
@@ -335,6 +405,8 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                     request=req_name,
                     response=_ref_name(resp_schema),
                     deprecated=bool(op.get("deprecated")),
+                    description=_detail(op.get("description")),
+                    examples=op_examples,
                 )
             )
 

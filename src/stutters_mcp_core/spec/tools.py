@@ -99,9 +99,16 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
             Field(description="A schema name, a path ('/api/v1/endpoint/{id}'), or 'METHOD /path'"),
         ],
         source: Annotated[str | None, Field(description="API surface/spec to look in")] = None,
+        examples: Annotated[
+            bool,
+            Field(
+                description="Also return the spec's request/response examples and full parameter and "
+                "operation descriptions (larger; use when required fields or filter syntax are unclear)"
+            ),
+        ] = False,
     ) -> ToolResult:
         idx = await get_specs(ctx).get()
-        return object_result(idx.definition(name, source=source), shape=False)
+        return object_result(idx.definition(name, source=source, examples=examples), shape=False)
 
     if not api_call:
         return

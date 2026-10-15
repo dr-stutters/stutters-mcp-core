@@ -238,3 +238,80 @@ def test_list_result_keeps_more_flag_without_total() -> None:
     result = list_result(Page([{"id": 1}, {"id": 2}], offset=10, total=None, more=True))
     payload: Any = result.structured_content
     assert payload["next_offset"] == 12 and "total" not in payload
+
+
+# --- 0.3.1: spec examples + full descriptions ----------------------------------------------
+
+
+OAS3_WITH_EXAMPLES = {
+    "openapi": "3.0.0",
+    "info": {"version": "1"},
+    "paths": {
+        "/api/ospf": {
+            "post": {
+                "summary": "Create OSPF",
+                "description": "Creates an OSPF process. " + "x" * 400,
+                "parameters": [
+                    {
+                        "name": "filter",
+                        "in": "query",
+                        "schema": {"type": "string"},
+                        "description": "startTime:<epoch>;endTime:<epoch>;deviceUUID:<uuid> " + "y" * 200,
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/Ospf"},
+                            "examples": {"minimal": {"value": {"processId": 1, "timers": {"spf": 5}}}},
+                        }
+                    }
+                },
+                "responses": {"201": {"content": {"application/json": {"example": {"id": "abc"}}}}},
+            }
+        }
+    },
+    "components": {"schemas": {"Ospf": {"type": "object", "properties": {"processId": {"type": "integer"}}}}},
+}
+
+
+def test_examples_and_full_descriptions_only_on_request() -> None:
+    idx = build_index(OAS3_WITH_EXAMPLES, source="main")
+    plain = idx.definition("POST /api/ospf")["operations"][0]
+    assert "examples" not in plain and "description" not in plain and "description" not in plain["params"][0]
+    full = idx.definition("POST /api/ospf", examples=True)["operations"][0]
+    assert '"timers":{"spf":5}' in full["examples"]["request"]
+    assert full["examples"]["response"] == '{"id":"abc"}'
+    assert full["params"][0]["description"].endswith("y" * 200)  # not cut at 120 chars
+    assert len(full["description"]) > 300
+    assert SpecIndex.from_json(idx.to_json()).operations[0].examples == idx.operations[0].examples
+
+
+def test_swagger2_examples() -> None:
+    doc = {
+        "swagger": "2.0",
+        "info": {"version": "1"},
+        "paths": {
+            "/x": {
+                "post": {
+                    "parameters": [
+                        {
+                            "in": "body",
+                            "name": "b",
+                            "schema": {"type": "object"},
+                            "x-examples": {"application/json": {"a": 1}},
+                        }
+                    ],
+                    "responses": {"200": {"examples": {"application/json": {"ok": True}}}},
+                }
+            }
+        },
+    }
+    op = build_index(doc).definition("POST /x", examples=True)["operations"][0]
+    assert op["examples"] == {"request": '{"a":1}', "response": '{"ok":true}'}
+    assert (
+        build_index({**doc, "paths": {"/y": {"get": {"responses": {}}}}}).definition("GET /y", examples=True)[
+            "operations"
+        ][0]["examples"]
+        == "none in the spec"
+    )
