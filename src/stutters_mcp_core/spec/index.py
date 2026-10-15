@@ -109,7 +109,7 @@ class SpecIndex:
         ]
 
     def definition(self, name: str, *, source: str | None = None, examples: bool = False) -> dict[str, Any]:
-        """A schema by name, or every operation at a path ('/api/v1/endpoint/{id}' or with a method
+        """A schema by name, or every operation at a path ('/<resource>/{id}' or with a method
         prefix 'GET /api/...'). With `examples`, operations also carry the spec's request/response
         examples and the full (untruncated) operation and parameter descriptions."""
         name = name.strip()

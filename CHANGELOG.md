@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-10-15
+
+### Fixed
+- The spec tools' descriptions used ISE examples ('network device group', '/api/v1/endpoint/{id}') on every server,
+  pointing models at paths that don't exist on CML/FMC/CatC (#57). Text is now neutral by default.
+
+### Added
+- `ServerSpec(spec_search_example=..., spec_path_example=...)` for product-specific examples in those descriptions.
+
 ## [0.12.1] - 2026-10-15
 
 ### Fixed
