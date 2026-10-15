@@ -28,9 +28,9 @@ from fastmcp.server.auth import AuthProvider
 from fastmcp.server.lifespan import lifespan
 from pydantic import Field
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 
-from stutters_mcp_core import __version__
+from stutters_mcp_core import __version__, metrics
 from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
@@ -131,9 +131,14 @@ def build_server(
         }
         if spec_sources is not None:
             state["specs"] = SpecStore(app, spec_sources(app), cache_dir, settings.url)
+        listener = None
+        if settings.mcp_metrics and settings.mcp_metrics_port is not None:
+            listener = await metrics.start_listener(settings.mcp_metrics_host, settings.mcp_metrics_port)
         try:
             yield state
         finally:
+            if listener is not None:
+                await listener.stop()
             await _aclose(app)
 
     instructions = spec.instructions.rstrip() + "\n"
@@ -159,6 +164,12 @@ def build_server(
     if roles is not None:
         mcp.add_middleware(RoleMiddleware(roles, mcp))
 
+    if settings.mcp_metrics:
+        metrics.enable(lambda name: name in getattr(mcp, "_stutters_tiers", {}))
+        metrics.set_info(spec.name, _server_version(spec.name), __version__)
+        if settings.mcp_metrics_port is None:
+            _register_metrics_route(mcp, auth)
+
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
         """Liveness for Docker/load balancers. Unauthenticated, so it reveals nothing upstream."""
@@ -174,6 +185,31 @@ def build_server(
     if spec_sources is not None:
         register_spec_tools(reg, product=spec.product)
     return mcp
+
+
+def _server_version(name: str) -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def _register_metrics_route(mcp: FastMCP[Any], auth: AuthProvider | None) -> None:
+    """GET /metrics on the MCP HTTP app, behind the same bearer tokens as MCP itself."""
+
+    @mcp.custom_route("/metrics", methods=["GET"])
+    async def metrics_route(request: Request) -> Response:
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        token = token.strip()
+        if auth is None or scheme.lower() != "bearer" or not token or await auth.verify_token(token) is None:
+            return PlainTextResponse(
+                "metrics need Authorization: Bearer <one of MCP_AUTH_TOKENS>\n",
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return PlainTextResponse(metrics.REGISTRY.render(), media_type=metrics.CONTENT_TYPE)
 
 
 def _clean(text: str, settings: BaseServerSettings) -> str:
