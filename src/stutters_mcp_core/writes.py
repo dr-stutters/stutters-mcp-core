@@ -23,7 +23,9 @@ call with identical args and that token applies it, after re-checking that the t
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import secrets
@@ -141,6 +143,10 @@ class ToolRegistrar:
             if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
                 self.withheld[tool_name] = tier
                 return fn
+            if task and not inspect.iscoroutinefunction(fn):
+                raise ValueError(
+                    f"{tool_name}: task=True needs an async function (background tasks run async)"
+                )
             registered: Callable[..., Any] = fn
             if len(self.target_names) > 1:
                 from stutters_mcp_core.targets import with_target_argument
@@ -152,6 +158,15 @@ class ToolRegistrar:
                 # others run the call synchronously as before.
                 from fastmcp.utilities.tasks import TaskConfig
 
+                from stutters_mcp_core.secrets import SecretErrorMiddleware
+                from stutters_mcp_core.targets import with_task_guard
+
+                scrubber = SecretErrorMiddleware(self.settings)
+                registered = with_task_guard(
+                    registered,
+                    server_has_auth=lambda: self.mcp.auth is not None,
+                    scrub=scrubber.scrub,
+                )
                 extra["task"] = TaskConfig(mode="optional")
                 self.task_tools.add(tool_name)
             self.mcp.tool(
@@ -499,6 +514,10 @@ async def preview_or_apply(
         extra["approved_by"] = caller
     try:
         result = await apply()
+    except asyncio.CancelledError:
+        # e.g. tasks/cancel on a background task mid-apply: the change may be partly done upstream.
+        _emit(ctx, "apply_cancelled", tool, caller, plan.summary, **extra)
+        raise
     except Exception as e:
         _emit(ctx, "apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         raise

@@ -355,10 +355,13 @@ class SecretErrorMiddleware(Middleware):
             return await call_next(context)
         except Exception as e:
             message = str(e)
-            clean = scrub_text(mask_values(message, self._all_values()))
+            clean = self.scrub(message)
             if clean == message:
                 raise
             raise ToolError(clean) from None
+
+    def scrub(self, message: str) -> str:
+        return scrub_text(mask_values(message, self._all_values()))
 
     def _all_values(self) -> set[str]:
         values = set(self.values)

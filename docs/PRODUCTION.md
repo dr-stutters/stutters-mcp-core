@@ -300,9 +300,14 @@ clients that don't support tasks still call them synchronously, exactly as befor
 | Variable | Default | Notes |
 |---|---|---|
 | `MCP_TASKS` | `false` | needs the `tasks` extra: the server depends on `stutters-mcp-core[tasks]` |
-| `MCP_TASKS_URL` | `memory://` | Docket backend: `memory://` (one process; tasks are lost on restart) or `redis://host:6379/0` / Valkey for durability |
+| `MCP_TASKS_URL` | `memory://` | Docket backend: `memory://` (one process; queued and finished tasks are lost on restart) or `redis://host:6379/0` / Valkey for durability |
 
 The caller's identity travels into the task (roles, previews, two-person and the audit log see the same
 caller), and the `instance` argument works as usual. The audit log's `tool_call` event and the
-`mcp_tool_*` metrics record the task *submission*; the write events (`preview`, `applied`, ...) are logged when
-the task runs. `<prefix>_status` lists the task-capable tools under `server.tasks`.
+`mcp_tool_*` metrics record the task *submission*; the write events (`preview`, `applied`, `apply_cancelled`, ...)
+are logged when the task runs. `<prefix>_status` lists the task-capable tools under `server.tasks`.
+
+Limits: roles are checked when the task is submitted (a role removed afterwards doesn't stop a queued task);
+a task whose caller credentials expired before it ran is refused (never run as `local`); `tasks/cancel` during
+an apply stops the tool but can leave an upstream change half-done (audit event `apply_cancelled`; check the
+appliance). Workers run in the server process; separate `fastmcp-tasks` worker processes are not supported.

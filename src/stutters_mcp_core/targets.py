@@ -190,3 +190,47 @@ def with_target_argument(fn: F, names: list[str], default: str) -> F:  # noqa: U
     wrapper.__signature__ = sig.replace(parameters=params)  # type: ignore[union-attr]
     wrapper.__annotations__ = {**hints, ARGUMENT: annotation}
     return wrapper  # type: ignore[return-value]
+
+
+def with_task_guard(fn: F, *, server_has_auth: Callable[[], bool], scrub: Callable[[str], str]) -> F:  # noqa: UP047
+    """Wrap a tool that runs as an MCP background task (C12). The task worker doesn't run the FastMCP
+    middleware chain, so this does two things the middleware would:
+    - fail closed when the caller's credentials didn't reach the worker (e.g. the token expired while the task
+      was queued): never fall back to the stdio identity `local`;
+    - scrub secrets out of the error message returned through tasks/get."""
+    import typing
+
+    from fastmcp.exceptions import ToolError
+
+    try:
+        hints = typing.get_type_hints(fn, include_extras=True)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"{fn.__name__}: can't resolve its type hints for the task wrapper ({e})") from None
+    sig = inspect.signature(fn)
+    sig = sig.replace(
+        parameters=[p.replace(annotation=hints.get(n, p.annotation)) for n, p in sig.parameters.items()],
+        return_annotation=hints.get("return", sig.return_annotation),
+    )
+
+    @functools.wraps(fn)
+    async def task_wrapper(*args: Any, **kwargs: Any) -> Any:
+        from fastmcp.server.dependencies import get_access_token
+        from fastmcp_tasks.context import get_task_context
+
+        if get_task_context() is not None and server_has_auth() and get_access_token() is None:
+            raise ToolError(
+                "The caller's credentials were no longer valid when this background task ran (they expire "
+                "while a task waits). Nothing was done; call the tool again."
+            )
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as e:
+            message = str(e)
+            clean = scrub(message)
+            if clean != message or not isinstance(e, ToolError):
+                raise ToolError(clean) from None
+            raise
+
+    task_wrapper.__signature__ = sig  # type: ignore[attr-defined]
+    task_wrapper.__annotations__ = dict(hints)
+    return task_wrapper  # type: ignore[return-value]

@@ -26,6 +26,11 @@ SPEC = ServerSpec("t-mcp-server", "t", "T", "DEMO_", "Tools for the task test se
 
 
 def register(reg: ToolRegistrar) -> None:
+    @reg.read(title="Failing report", task=True)
+    async def t_boom(ctx: Context) -> dict[str, Any]:
+        """Fail with an upstream message that echoes a credential (scrubbing test)."""
+        raise RuntimeError("upstream said password=hunter2hunter2 Authorization: Bearer abcdefghijklmnop0123")
+
     @reg.read(title="Slow report", task=True)
     async def t_slow_report(ctx: Context, seconds: float = 0.05) -> dict[str, Any]:
         """Build a slow report: waits, reports progress and returns which client it used."""
@@ -84,7 +89,10 @@ async def test_task_tool_runs_as_background_task(api: Any) -> None:
     async with Client(server(mcp_tasks=True, mcp_enable_writes=True)) as c:
         assert await run_task(c, "t_slow_report", {"seconds": 0.05}) == {"version": "7.0"}
         status = (await c.call_tool("t_status", {})).structured_content
-    assert status["server"]["tasks"] == {"backend": "memory", "tools": ["t_slow_deploy", "t_slow_report"]}
+    assert status["server"]["tasks"] == {
+        "backend": "memory",
+        "tools": ["t_boom", "t_slow_deploy", "t_slow_report"],
+    }
 
 
 async def test_preview_and_confirm_inside_tasks_keep_the_caller(api: Any) -> None:
@@ -115,3 +123,48 @@ def test_missing_extra_is_a_clear_error(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(builtins, "__import__", fake)
     with pytest.raises(ValueError, match=r"stutters-mcp-core\[tasks\]"):
         server(mcp_tasks=True)
+
+
+async def test_task_errors_are_scrubbed(api: Any) -> None:
+    from fastmcp.exceptions import ToolError
+
+    async with Client(server(mcp_tasks=True)) as c:
+        with pytest.raises(ToolError) as exc:
+            await run_task(c, "t_boom", {})
+    text = str(exc.value)
+    assert "upstream said" in text and "hunter2hunter2" not in text and "abcdefghijklmnop0123" not in text
+
+
+async def test_task_without_credentials_fails_closed(api: Any) -> None:
+    """An HTTP server (auth configured) whose task reaches the worker without the caller's token refuses
+    instead of running as `local` (the in-memory client carries no token, like an expired one)."""
+    from fastmcp.exceptions import ToolError
+
+    from stutters_mcp_core.inbound_auth import NamedTokenVerifier, hash_token
+
+    settings = make_settings(mcp_tasks=True)
+    auth = NamedTokenVerifier({"a": hash_token("x" * 30)})
+    srv = build_server(SPEC, settings, client_factory=DemoApp, register=[register], auth=auth)
+    async with Client(srv) as c:
+        with pytest.raises(ToolError, match="credentials were no longer valid"):
+            await run_task(c, "t_slow_report", {})
+
+
+async def test_instance_argument_inside_tasks(api: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_PROD_URL", BASE)
+    monkeypatch.setenv("DEMO_PROD_USERNAME", "u2")
+    monkeypatch.setenv("DEMO_PROD_PASSWORD", "p2")
+    async with Client(server(mcp_tasks=True, instances="prod")) as c:
+        assert await run_task(c, "t_slow_report", {"instance": "prod"}) == {"version": "7.0"}
+
+
+def test_sync_task_tool_rejected_even_with_tasks_off() -> None:
+    from fastmcp import FastMCP
+
+    reg = ToolRegistrar(FastMCP("x"), make_settings(), "t")
+    with pytest.raises(ValueError, match="needs an async function"):
+
+        @reg.read(title="Sync", task=True)
+        def t_sync() -> dict[str, Any]:
+            """A synchronous tool that wrongly asks to run as a background task."""
+            return {}
