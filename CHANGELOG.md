@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Audit log rotation (C13)**: `MCP_AUDIT_LOG_MAX_MB` + `MCP_AUDIT_LOG_BACKUPS` rotate a file audit log
+  (`configure_audit_log(path, max_mb=, backups=)`); unset = unchanged.
+- **Session tokens masked automatically (C14)**: `LoginTokenAuth` registers every token it obtains (header values,
+  the credential after `Bearer `, secret-named `Token.data` such as refresh tokens) with the log scrubber and
+  tool-error scrubbing (`secrets.register_header_values`); the newest 64 runtime values are kept.
+
 ## [0.10.0] - 2026-10-15
 
 ### Added

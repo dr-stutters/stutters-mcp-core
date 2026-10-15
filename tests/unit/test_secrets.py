@@ -239,3 +239,38 @@ def test_ref_conflicts_with_value(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("DEMO_PASSWORD_REF", "file:/x")
     with pytest.raises(ValueError, match="set DEMO_PASSWORD or DEMO_PASSWORD_REF, not both"):
         DemoSettings(url=BASE, _env_file=None)  # type: ignore[call-arg]
+
+
+async def test_login_session_tokens_are_masked_automatically(capsys: pytest.CaptureFixture[str]) -> None:
+    """C14: a token minted by LoginTokenAuth never shows up in logs, without the server registering it."""
+    import sys
+
+    from stutters_mcp_core.http import ApiClient, LoginTokenAuth, Token
+    from stutters_mcp_core.secrets import SecretScrubber
+
+    install_secret_filter(make_settings(password=PASSWORD))
+    session = "sess-9f8e7d6c5b4a39281706"
+
+    async def login(client: ApiClient) -> Token:
+        return Token(
+            {"X-Auth-Token": session}, data={"refresh_token": "refr-1234567890abcdef", "domain": "Global"}
+        )
+
+    with respx.mock(base_url=BASE) as api:
+        api.get("/x").mock(return_value=httpx.Response(200, json={}))
+        client = ApiClient(BASE, product="P", env_prefix="P_", auth=LoginTokenAuth(login))
+        await client.get("/x")
+        await client.aclose()
+    lg = logging.getLogger("c14.test")
+    handler = logging.StreamHandler(sys.stderr)
+    lg.addHandler(handler)
+    try:
+        lg.warning("upstream echoed %s and refr-1234567890abcdef, domain Global", session)
+    finally:
+        lg.removeHandler(handler)
+    err = capsys.readouterr().err
+    assert session not in err and "refr-1234567890abcdef" not in err and "Global" in err
+    s = SecretScrubber()
+    for i in range(SecretScrubber.RUNTIME_KEEP + 5):
+        s.add_runtime(f"token-value-{i:04d}")
+    assert len(s.runtime) == SecretScrubber.RUNTIME_KEEP and "token-value-0000" not in s.values

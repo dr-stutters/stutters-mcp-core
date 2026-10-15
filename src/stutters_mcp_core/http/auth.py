@@ -91,6 +91,18 @@ LoginFn = Callable[["ApiClient"], Awaitable[Token]]
 RefreshFn = Callable[["ApiClient", Token], Awaitable[Token | None]]
 
 
+def _register_token(token: Token) -> None:
+    """Session credentials never reach logs or tool errors (C14): mask the header values and secret-named
+    data (refresh tokens...) the login returned."""
+    from stutters_mcp_core.formatting import is_secret_key
+    from stutters_mcp_core.secrets import register_header_values, register_secret
+
+    register_header_values(token.headers)
+    for key, value in token.data.items():
+        if isinstance(value, str) and is_secret_key(key):
+            register_secret(value)
+
+
 class LoginTokenAuth:
     """Log in lazily, share one token across concurrent requests (single-flight), renew it shortly
     before it expires or after a 401. If `refresh` is given it is tried before a full login and may
@@ -112,6 +124,11 @@ class LoginTokenAuth:
         return t is not None and (t.expires_at is None or time.monotonic() < t.expires_at - self._margin)
 
     async def _renew(self, client: ApiClient) -> Token:
+        token = await self._obtain(client)
+        _register_token(token)
+        return token
+
+    async def _obtain(self, client: ApiClient) -> Token:
         old = self._token
         if old is not None and self._refresh is not None:
             try:
@@ -143,6 +160,7 @@ class LoginTokenAuth:
                 self._token = await self._renew(client)
             elif self._token is None:
                 self._token = await self._login(client)
+                _register_token(self._token)
         return True
 
     def invalidate(self) -> None:
