@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-15
+
+### Added
+- **`<server> config [--json]` (C17)**: the effective configuration without contacting the appliance: every
+  setting with its source (env, .env, `<VAR>_FILE`, `<VAR>_REF`, default; secrets only as set/unset), URLs without
+  userinfo, the parsed safety rails, roles summary, instances with their URL/credentials state/rules, HTTP auth
+  (token names, OAuth) and feature switches. Invalid configuration exits with the (scrubbed) validation error.
+
+### Adopting (server builders)
+- Bump to `tag = "v0.12.0"`; nothing else. Mention `<server> config` in your README's troubleshooting section.
+
 ## [0.11.0] - 2026-10-15
 
 ### Added

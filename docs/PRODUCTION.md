@@ -1,5 +1,9 @@
 # Production controls
 
+> Check what a container actually resolved with `<server> config` (or `--json`): every setting and where it
+> came from, secrets shown only as set/unset, plus the rails, roles, instances and auth below. It doesn't
+> contact the appliance (core 0.12.0).
+
 Everything on this page is **opt-in**: with none of these variables set, a server behaves exactly as it
 did before core 0.5.0. They apply to every server built on stutters-mcp-core (cml, fmc, catc, ise), and
 are read from the environment or the server's `.env` file.
