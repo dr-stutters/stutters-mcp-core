@@ -15,6 +15,7 @@ from stutters_mcp_core import (
     Plan,
     ResponseFormat,
     ServerSpec,
+    Tier,
     ToolRegistrar,
     build_server,
     get_client,
@@ -24,6 +25,7 @@ from stutters_mcp_core import (
     server_config,
 )
 from stutters_mcp_core.http import ApiClient, LoginTokenAuth, OffsetLimit, Token
+from stutters_mcp_core.prompts import tool_ref
 from stutters_mcp_core.spec import SpecSource
 
 BASE = "https://demo.test"
@@ -166,6 +168,26 @@ def register(reg: ToolRegistrar) -> None:
             confirm=confirm,
             plan=Plan("Delete ALL items", side_effects=["irreversible"]),
             apply=lambda: app.api.delete("/api/items"),
+        )
+
+    @reg.prompt(title="Audit items", uses=["demo", "other"], tools=["demo_get_item"])
+    def demo_audit_items(
+        kind: Annotated[str, Field(description="Item kind to audit: router or switch")],
+        max_items: Annotated[int, Field(description="Stop after this many items")] = 20,
+    ) -> str:
+        """Audit the inventory: list items of one kind, inspect each, and cross-check another server."""
+        return (
+            f"1. Call {tool_ref('demo_list_items')} and keep the {kind} items (at most {max_items}).\n"
+            f"2. For each, call {tool_ref('demo_get_item')}.\n"
+            f"3. Compare with {tool_ref('other_list_things')} on the other server, if it is connected."
+        )
+
+    @reg.prompt(title="Clean up items", tier=Tier.WRITE)
+    def demo_cleanup_items() -> str:
+        """Remove test items: find them, then create replacements, previewing every change first."""
+        return (
+            f"List with {tool_ref('demo_list_items')}, then use {tool_ref('demo_create_item')} "
+            "(preview first)."
         )
 
 
