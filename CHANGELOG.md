@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Secrets (G4, finished).** `<VAR>_REF=<scheme>:<ref>` for every secret setting, resolved by a secret loader
+  (`stutters_mcp_core.secrets.SecretLoader`: `load(ref) -> str`). Built-in `file:<path>#<key>` (JSON or KEY=VALUE);
+  plug in others (Vault, 1Password; examples in docs/PRODUCTION.md) with `MCP_SECRET_LOADERS="scheme=module:Class"`.
+- `docs/templates/docker-compose.secrets.yml`: compose override that mounts the password and token list as Docker
+  secrets (`<P>_PASSWORD_FILE`, `MCP_AUTH_TOKENS_FILE`); the dockerignore template excludes `secrets/`.
+- Secret hygiene: `scrub_text` / `scrub_url` / `SecretValueFilter` / `install_secret_filter`. The CLI masks every
+  configured secret value and credential shape in all log output (including tracebacks); upstream error details,
+  redirect locations and connection errors are scrubbed; status hides URL userinfo, masks secret-looking keys in
+  the product status and the configured secret values in error text; settings validation errors no longer echo
+  input values.
+
+### Changed
+- Setting a secret both as `<VAR>` and `<VAR>_FILE`/`<VAR>_REF` reports "set A or B, not both" (unchanged for
+  the existing pair).
+
 ## [0.6.0] - 2026-10-15
 
 ### Added

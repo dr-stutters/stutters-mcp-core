@@ -18,6 +18,7 @@ from fastmcp.tools import ToolResult
 
 from stutters_mcp_core.formatting import MASK, is_secret_key, mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.secrets import scrub_text
 
 audit = logging.getLogger("stutters_mcp_core.audit")
 
@@ -59,7 +60,7 @@ class AuditMiddleware(Middleware):
         try:
             result = await call_next(context)
         except Exception as e:
-            event.update(outcome="error", error_type=type(e).__name__, error=str(e)[:300])
+            event.update(outcome="error", error_type=type(e).__name__, error=scrub_text(str(e))[:300])
             raise
         else:
             event["outcome"] = "ok"

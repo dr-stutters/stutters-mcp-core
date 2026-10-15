@@ -2,6 +2,7 @@
 #
 #   cp .env.example .env    # set __ENV___URL/USERNAME/PASSWORD and MCP_AUTH_TOKENS (__SERVER__ token <name>)
 #   CORE_READ_TOKEN=... docker compose up -d --build
+#   (credentials as Docker secrets instead of .env: see docker-compose.secrets.yml)
 services:
   __SERVER__:
     build:

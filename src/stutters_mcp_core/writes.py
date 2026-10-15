@@ -41,6 +41,7 @@ from stutters_mcp_core.errors import InvalidRequest
 from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
+from stutters_mcp_core.secrets import scrub_text
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -459,7 +460,9 @@ async def preview_or_apply(
     try:
         result = await apply()
     except Exception as e:
-        audit.info(dumps_event("apply_failed", tool, caller, plan.summary, error=str(e)[:300], **extra))
+        audit.info(
+            dumps_event("apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
+        )
         raise
     audit.info(dumps_event("applied", tool, caller, plan.summary, **extra))
     out = {"status": "applied", "action": plan.summary}

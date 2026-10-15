@@ -32,6 +32,7 @@ def server_config(env_prefix: str) -> SettingsConfigDict:
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,
+        hide_input_in_errors=True,  # validation errors never echo values (they may be secrets)
     )
 
 
@@ -50,9 +51,10 @@ def _env_var(field_name: str, info: FieldInfo, env_prefix: str) -> str:
 
 class SecretFileSource(PydanticBaseSettingsSource):
     """`<VAR>_FILE` for every SecretStr setting (Docker/Kubernetes secrets): ISE_PASSWORD_FILE=/run/secrets/x
-    reads the password from that file (one trailing newline stripped). Looked up in the environment and the
-    .env file; setting both <VAR> and <VAR>_FILE is an error. Fields that already have a `<name>_file`
-    setting (MCP_AUTH_TOKENS_FILE) are left to it."""
+    reads the password from that file (one trailing newline stripped). `<VAR>_REF=<scheme>:<ref>` resolves it
+    through a secret loader (stutters_mcp_core.secrets; built-in `file:`, more via MCP_SECRET_LOADERS).
+    Looked up in the environment and the .env file; setting more than one of <VAR>, _FILE, _REF is an error.
+    Fields that already have a `<name>_file` setting (MCP_AUTH_TOKENS_FILE) are left to it."""
 
     def __init__(self, settings_cls: type[BaseSettings], env_file: Any, given: Any = ()) -> None:
         super().__init__(settings_cls)
@@ -88,23 +90,30 @@ class SecretFileSource(PydanticBaseSettingsSource):
         dotenv: dict[str, str] | None = None
         prefix = str(self.settings_cls.model_config.get("env_prefix", ""))
         out: dict[str, Any] = {}
+        loaders: dict[str, Any] | None = None
         for name in secret_fields:
             var = _env_var(name, fields[name], prefix)
-            file_var = var + "_FILE"
-            path = env.get(file_var)
-            if path is None:
-                dotenv = self._dotenv() if dotenv is None else dotenv
-                path = dotenv.get(file_var)
-            if not path:
-                continue
+            file_var, ref_var = var + "_FILE", var + "_REF"
             dotenv = self._dotenv() if dotenv is None else dotenv
-            if env.get(var) or dotenv.get(var):
-                raise ValueError(f"set {var} or {file_var}, not both")
-            try:
-                text = Path(path).expanduser().read_text()
-            except OSError as e:
-                raise ValueError(f"{file_var}: cannot read {path}: {e.strerror or e}") from None
-            out[name] = text.removesuffix("\n")  # read_text() already turned CRLF into LF
+            path = env.get(file_var) or dotenv.get(file_var)
+            ref = env.get(ref_var) or dotenv.get(ref_var)
+            if not path and not ref:
+                continue
+            given = [v for v in (var, file_var, ref_var) if env.get(v) or dotenv.get(v)]
+            if len(given) > 1:
+                raise ValueError(f"set {' or '.join(given)}, not {'both' if len(given) == 2 else 'several'}")
+            if path:
+                try:
+                    text = Path(path).expanduser().read_text()
+                except OSError as e:
+                    raise ValueError(f"{file_var}: cannot read {path}: {e.strerror or e}") from None
+                out[name] = text.removesuffix("\n")  # read_text() already turned CRLF into LF
+                continue
+            from stutters_mcp_core.secrets import load_loaders, resolve_ref
+
+            if loaders is None:
+                loaders = load_loaders(env.get("MCP_SECRET_LOADERS") or dotenv.get("MCP_SECRET_LOADERS"))
+            out[name] = resolve_ref(var, str(ref), loaders)
         return out
 
 
@@ -158,6 +167,8 @@ class BaseServerSettings(BaseSettings):
     mcp_blast_radius_overrides: str | None = Field(
         default=None, validation_alias=_alias("MCP_BLAST_RADIUS_OVERRIDES")
     )
+    # "scheme=package.module:Class" entries for <VAR>_REF secret references (read by SecretFileSource)
+    mcp_secret_loaders: str | None = Field(default=None, validation_alias=_alias("MCP_SECRET_LOADERS"))
     mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
 
     # --- per-user roles (G2, stutters_mcp_core.roles); off unless MCP_ROLES(_FILE) is set ----
