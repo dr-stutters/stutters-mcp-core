@@ -196,6 +196,9 @@ Every write step stays preview-first: show the preview and wait for approval."""
   not in `uses`, missing argument docs, and bad names or descriptions. Checking the *other* servers' tool
   names is the prompt test kit (C9, Next).
 
+**Logs and events:** servers are pull-only (ADR-003). Expose a platform's logs and events as ordinary read
+tools that query the platform when called; don't add listeners, background pollers or buffers.
+
 ## 6. server.py
 
 ```python

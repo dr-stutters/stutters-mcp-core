@@ -6,7 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-15
+## [0.3.0] - 2026-10-15
+
+### Removed
+- The event framework and inbound receivers added in 0.2.0 (`stutters_mcp_core.events`: `EventSource`,
+  `PollingEventSource`, `EventBuffer`/`EventHub`, `SyslogReceiver`, `WebhookReceiver`, `<prefix>_list_events`,
+  `<prefix>_event_sources`, `events://` resources, `build_server(event_sources=, event_options=)` and the
+  `MCP_EVENT_*` / `MCP_SYSLOG_*` / `MCP_WEBHOOK*` settings). The servers stay **pull-only**: they read logs
+  and events from the platforms when a tool is called, and never receive pushed data. See ADR-003.
+  No released server used these APIs.
+
+### Kept from 0.2.0
+- MCP prompts (`PromptRegistrar`, `tool_ref`, `assert_prompt_contract`) and `fetch_page(max_page=...)`.
+
+## [0.2.0] - 2026-10-15 (superseded by 0.3.0; its event APIs were removed)
 
 Roadmap "Now" (C2–C5). Backwards compatible with 0.1.x: servers that pass no `event_sources` and
 register no prompts see no change, and every new setting is off by default.

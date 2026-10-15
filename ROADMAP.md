@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15 (per-server roadmaps added). Current releases: core v0.2.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+_Last updated 2026-10-15: event ingestion scrapped (ADR-003, core v0.3.0); servers are pull-only. Current releases: core v0.2.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -16,8 +16,8 @@ Every item is also a GitHub issue under the matching milestone.
 |---|---|
 | **Audiences** | Labs (dCloud/CML) → customer PoCs and demos → production networks → public open source |
 | **Buckets** | **Now** (next 1–2 releases) · **Next** · **Later** · **Production gate** (prerequisite for production or public use) |
-| **Priorities** | 1. Depth per product · 2. Real-time / event-driven · 3. Cross-product workflows (as MCP prompts) |
-| **Event design** | Each server runs its own event receiver with a bounded in-memory buffer, exposed as MCP tools/resources. **No shared broker or extra infrastructure.** External prerequisites (pxGrid certificates, webhook reachability, syslog destinations) are listed per item. |
+| **Priorities** | 1. Depth per product · 2. On-demand log and event lookup (tools read each platform's own logs, events and history when asked) · 3. Cross-product workflows (as MCP prompts) |
+| **Logs and events** | **Pull-only, on demand** ([ADR-003](docs/adr/003-no-event-ingestion.md)): tools query the platforms' logs, events and history when called. No receivers, background pollers, buffers or relays; the servers never accept pushed data. |
 | **Workflows** | MCP **prompts shipped in each server**. No orchestrator service. Claude chains the servers. |
 | **Out of scope** | Other products (NetBox, Splunk, Windows, WLC, SD-WAN...); a shared message bus; an orchestrator server. Revisit after Later. |
 
@@ -28,25 +28,23 @@ Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or ne
 ### Now
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C1](https://github.com/dr-stutters/stutters-mcp-core/issues/6) | **Bump all servers to core v0.1.2** (core side done; each server's Phase 3 builder bumps its pin, v0.2.0 recommended) | `list_result` keeps `Page.more`; CatC lists without a total stop looking complete | none | S |
+| [C1](https://github.com/dr-stutters/stutters-mcp-core/issues/6) | **Bump all servers to core v0.3.0** (each server's Phase 3 builder bumps its pin) | `list_result` keeps `Page.more`; CatC lists without a total stop looking complete | none | S |
 | ✅ [C2](https://github.com/dr-stutters/stutters-mcp-core/issues/7) | **MCP prompts support** (✅ v0.2.0): `PromptRegistrar` with naming (`<prefix>_<workflow>`), argument docs, and a contract-linter extension (description, arguments, which servers a prompt expects) | Workflows ship as prompts in each server | none | S |
-| ✅ [C3](https://github.com/dr-stutters/stutters-mcp-core/issues/8) | **Event framework v1** (✅ v0.2.0): `EventSource` base (a background task started and stopped by the lifespan, reconnect with backoff), `EventBuffer` (bounded ring buffer; per-source cursor; filters by time, type and key), generic tools `<prefix>_list_events` / `<prefix>_event_sources` (status, lag, drops), MCP resource `events://<prefix>/recent` | One pattern for pxGrid, webhooks, syslog and the CML websocket | none (each source lists its own) | M |
-| ✅ [C4](https://github.com/dr-stutters/stutters-mcp-core/issues/9) | **Inbound receivers in core** (✅ v0.2.0): a `WebhookReceiver` (Starlette route on the existing HTTP app, per-source shared-secret/HMAC or basic auth, allow-listed source IPs) and a `SyslogReceiver` (UDP/TCP listener, RFC 5424/3164 parsing, per-sender allow-list) | CatC webhooks, FMC syslog | A port reachable from the appliance; firewall rules | M |
+| ❌ [C3](https://github.com/dr-stutters/stutters-mcp-core/issues/8) | ~~Event framework~~: shipped in v0.2.0, **removed in v0.3.0** (ADR-003: pull-only) | — | — | — |
+| ❌ [C4](https://github.com/dr-stutters/stutters-mcp-core/issues/9) | ~~Inbound webhook/syslog receivers~~: shipped in v0.2.0, **removed in v0.3.0** (ADR-003) | — | — | — |
 | ✅ [C5](https://github.com/dr-stutters/stutters-mcp-core/issues/10) | **`fetch_page(max_page=...)` override** (deferred request from CatC) (✅ v0.2.0) | Per-endpoint page caps without several pagers | none | S |
 
 ### Next
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C6](https://github.com/dr-stutters/stutters-mcp-core/issues/11) | **Optional persistence for events**: write-through to a local SQLite file (bounded by age and size) so events survive restarts | Investigations look back hours, not minutes | A Docker volume | M |
-| [C7](https://github.com/dr-stutters/stutters-mcp-core/issues/12) | **Event correlation helpers**: key extraction (MAC, IP, username, device) + `<prefix>_events_for(key)`, so prompts can join events across servers in the model | "What happened to this host?" across products | none | S |
 | [C8](https://github.com/dr-stutters/stutters-mcp-core/issues/13) | **XML helper in core** (if a second server needs it; ISE keeps `xmlutil.py` until then) | Avoid duplicates | none | S |
 | [C9](https://github.com/dr-stutters/stutters-mcp-core/issues/14) | **Prompt test kit**: render every prompt, check its referenced tools exist on the target servers (by name/prefix), snapshot tests | Prompts rot silently otherwise | none | S |
 
 ### Later
+_C6, C7, C10, C11 (event persistence, correlation, notifications, fan-out) were dropped with ADR-003._
+
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C10](https://github.com/dr-stutters/stutters-mcp-core/issues/15) | **MCP notifications for events** (resource-updated / subscriptions) once clients support them well | Push instead of poll | Client support | M |
-| [C11](https://github.com/dr-stutters/stutters-mcp-core/issues/16) | Event fan-out to an external sink (HTTP or syslog forwarder) as an *option*, not a requirement | Feeds SIEMs without making them a dependency | The sink | S |
 | [C12](https://github.com/dr-stutters/stutters-mcp-core/issues/17) | Long-running task registry (MCP tasks) for deploys, discoveries and SWIM | Better UX than wait/poll for 10+ minute jobs | Client support | M |
 
 ## Cross-product workflow prompts (catalogue)
@@ -65,7 +63,7 @@ The model carries out the steps with each server's tools; every write step stays
 | `fmc_onboard_ftd` (CML FTDv recipe or existing FTD → register → policy → deploy → verify) | fmc | fmc, cml | Next |
 | `catc_change_window` (template preview → deploy → compliance → rollback plan) | catc | catc | Next |
 | `cml_replicate_site` (read CatC/ISE/FMC config for a site → build a CML replica) | cml | cml, catc, ise, fmc | Later |
-| `ise_incident_timeline` (pxGrid + MnT + FMC events + CatC issues for a host, merged by time) | ise | ise, fmc, catc | Later |
+| `ise_incident_timeline` (ISE auth history + FMC audit/health + CatC events/issues for a host, each queried on demand, merged by time) | ise | ise, fmc, catc | Later |
 
 ## Production gate
 
@@ -91,11 +89,10 @@ Compiled from the four server roadmaps (2026-10-15). Items in **Now** need none 
 
 | # | Prerequisite | Who / effort | Unblocks |
 |---|---|---|---|
-| P1 | **Inbound reachability dCloud → cortex: TESTED 2026-10-15, NOT POSSIBLE.** A CML probe on 198.18.128.156 reaches ISE/CatC/FMC, but nothing reaches cortex's VPN address 10.16.104.82: the dCloud VPN only carries connections cortex starts (tcpdump on tun0 saw 0 packets), and cortex also drops new inbound on tun0. **Approach: an event relay in CML**: a small Linux node on 198.18.128.0/18 that appliances push to (syslog TCP, webhooks HTTPS), reached by cortex over an *outbound* SSH session with remote port forwards (SSH to the probe works). TCP only (no UDP syslog through the tunnel; use syslog over TCP). | cml relay recipe + core C4 | CatC webhooks (catc D7), FTD syslog (fmc F7), ISE remote syslog (ise I12) |
-| P2 | **ISE pxGrid persona + pxGrid client certificate** (+ approval or auto-approve; server → ISE :8910) | ISE UI/API toggle (lab) + cert from the ISE internal CA | ise I7, I15; CatC↔ISE integration (catc D8, D9, D13) |
+| P2 | **ISE pxGrid persona** for the Catalyst Center ↔ ISE integration (appliance to appliance; our servers don't subscribe to pxGrid) | ISE UI/API toggle (lab) | catc D8, D9, D13 |
 | P3 | **CML registered licence** (20 nodes + extra users) instead of EVAL (5 nodes) | Licence purchase/registration | cml L15, L17; relieves capacity limits on cml L10/L11/L13/L14, catc D13/D15, fmc F10/F11 |
 | P4 | **Windows lab server (AD + CA)** reachable and configured (the `Windows_Server` MCP host is still a placeholder) | Point at a dCloud/CML Windows Server | ise I8 (cert lifecycle), I11 (AD join), cml L11/L13 (EAP-TLS clients); optional CA for P2 |
-| P5 | **FMC UI-only setup**: a dedicated API user with a custom role; an eStreamer client cert | FMC UI (manual) | fmc F16 (gate), F12 (eStreamer) |
+| P5 | **FMC UI-only setup**: a dedicated API user with a custom role | FMC UI (manual) | fmc F16 (gate) |
 | P6 | **SWIM image**: a `c8000v-universalk9.<other-ver>.SPA.bin` from cisco.com (entitled account), plus an HTTP server CatC can reach | cisco.com download + a small web server | catc D12 |
 | P7 | **Older product versions** for the support matrix: CML 2.7–2.9, ISE 3.2–3.4, FMC 7.4/7.6, CatC 2.3.7/3.1 | dCloud labs or customer labs | Production gate: cml L18, ise I17, catc D18, fmc F17 (core G6) |
 | P8 | **Quick lab toggles**: SXP service on ISE | ISE UI/API (lab) | ise I9 |
@@ -109,13 +106,9 @@ Time-limited: the FMC Smart Licensing evaluation expires ≈2027-01-12; the ISE 
 | Service | Needed for | Provided by | Network path | Status |
 |---|---|---|---|---|
 | CML controller (EVAL: 5 running nodes) | All device testing | Lab | cortex → 198.18.128.10 | ✅ in use |
-| ISE pxGrid service + pxGrid client certificate | ISE real-time sessions, ANC, TrustSec | ISE node (enable pxGrid persona: currently OFF, :8910 refused) + CA (ISE internal or Windows CA) | server → ISE :8910 (WebSocket/STOMP) | ⏳ ise Next (P2) |
-| CatC event webhooks (destination + subscription) | CatC real-time issues/events | CatC Platform → Event Management | **CatC → server** HTTPS (needs a reachable URL) | ⏳ catc Now/Next |
-| FTD syslog | FMC connection and intrusion events | FTD platform settings (syslog destination, logging on rules) | **FTD → server** UDP/TCP 514/5514 | ⏳ fmc Next |
-| FMC eStreamer | Event history/replay | eStreamer client cert created in the FMC UI | **server → FMC** TCP 8302 | ⏳ fmc Later |
-| CML event websocket | Lab state changes | CML controller | server → CML :443 (wss) | ⏳ cml Next |
+| ISE pxGrid persona | Catalyst Center ↔ ISE integration (appliance to appliance) | ISE node (currently OFF) | CatC → ISE :8910 | ⏳ catc Next (P2) |
 | FTDv / FMCv / cat8000v / cat9000v images | Lab recipes | CML image library | — | ✅ present |
 | Device images (.bin) for SWIM | CatC SWIM live tests | cisco.com download | upload to CatC | ❌ missing |
 | Windows AD + CA | ISE AD identity, EAP-TLS, pxGrid certs | Existing Windows lab server (`Windows_Server` MCP) | ISE ↔ AD | ⏳ when needed |
 | IdP (OAuth) | G1 | GitHub / customer IdP | Internet | Production gate |
-| Public HTTPS ingress (Caddy/VPS or tunnel) | Claude Desktop connectors; cloud webhooks | VPS / tunnel provider | Internet → server | Production gate (optional) |
+| Public HTTPS ingress (Caddy/VPS or tunnel) | Claude Desktop connectors | VPS / tunnel provider | Internet → server | Production gate (optional) |
