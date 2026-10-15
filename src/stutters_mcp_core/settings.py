@@ -184,6 +184,10 @@ class BaseServerSettings(BaseSettings):
     mcp_oauth_jwt_key: SecretStr | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_JWT_KEY"))
     mcp_oauth_storage_dir: Path | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_STORAGE_DIR"))
 
+    # --- MCP background tasks (C12): `reg.write(..., task=True)` tools become MCP tasks -------
+    mcp_tasks: bool = Field(default=False, validation_alias=_alias("MCP_TASKS"))
+    mcp_tasks_url: str = Field(default="memory://", validation_alias=_alias("MCP_TASKS_URL"))
+
     # --- metrics (G5, stutters_mcp_core.metrics); off by default -------------------------
     mcp_metrics: bool = Field(default=False, validation_alias=_alias("MCP_METRICS"))
     mcp_metrics_port: int | None = Field(

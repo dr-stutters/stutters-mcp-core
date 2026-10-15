@@ -289,3 +289,20 @@ instance). `<prefix>_status(instance=...)` shows that instance and lists them al
 each. A confirm token only works on the instance it was previewed on, and previews, results and audit
 events carry `instance`. Safety rails, roles and the tier switches are server-wide: run a separate
 container for an instance that needs a different write policy (e.g. read-only production).
+
+## Long-running calls as MCP tasks (core 0.10.0, roadmap C12)
+
+Deploys, discoveries, provisioning and image distribution can take 10+ minutes. With `MCP_TASKS=true`,
+tools a server marks as long-running become MCP background tasks (SEP-2663, `io.modelcontextprotocol/tasks`):
+a client that supports tasks gets a task handle at once and polls `tasks/get` for progress and the result;
+clients that don't support tasks still call them synchronously, exactly as before.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `MCP_TASKS` | `false` | needs the `tasks` extra: the server depends on `stutters-mcp-core[tasks]` |
+| `MCP_TASKS_URL` | `memory://` | Docket backend: `memory://` (one process; tasks are lost on restart) or `redis://host:6379/0` / Valkey for durability |
+
+The caller's identity travels into the task (roles, previews, two-person and the audit log see the same
+caller), and the `instance` argument works as usual. The audit log's `tool_call` event and the
+`mcp_tool_*` metrics record the task *submission*; the write events (`preview`, `applied`, ...) are logged when
+the task runs. `<prefix>_status` lists the task-capable tools under `server.tasks`.

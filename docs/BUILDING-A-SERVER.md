@@ -170,7 +170,9 @@ Rules (enforced by `assert_tool_contract`):
   Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
 - Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
   module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
-- Long jobs: `poll_until(...)` with `ctx=ctx`. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
+- Long jobs: `poll_until(...)` with `ctx=ctx`, and mark the tool `@reg.write(..., task=True)` (or read/dangerous)
+  so that with `MCP_TASKS=true` it runs as an MCP background task (async functions only; depend on
+  `stutters-mcp-core[tasks]`). Without MCP_TASKS the flag does nothing. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
 
 ## 5a. Prompts (cross-product workflows)
 

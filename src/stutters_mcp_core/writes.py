@@ -116,6 +116,9 @@ class ToolRegistrar:
         self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
         self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
         self.target_names: list[str] = settings.target_names()  # >1: tools get an `instance` argument
+        task_tools: set[str] = getattr(mcp, "_stutters_task_tools", set())
+        mcp._stutters_task_tools = task_tools  # type: ignore[attr-defined]
+        self.task_tools = task_tools  # tools registered as MCP background tasks (MCP_TASKS)
 
     def _register(
         self,
@@ -127,6 +130,7 @@ class ToolRegistrar:
         idempotent: bool | None,
         tags: set[str] | None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         def deco(fn: F) -> F:
             tool_name = name or fn.__name__
@@ -142,6 +146,14 @@ class ToolRegistrar:
                 from stutters_mcp_core.targets import with_target_argument
 
                 registered = with_target_argument(fn, self.target_names, self.target_names[0])
+            extra: dict[str, Any] = {}
+            if task and getattr(self.settings, "mcp_tasks", False):
+                # MCP background task (C12): clients that support tasks get a task handle and poll;
+                # others run the call synchronously as before.
+                from fastmcp.utilities.tasks import TaskConfig
+
+                extra["task"] = TaskConfig(mode="optional")
+                self.task_tools.add(tool_name)
             self.mcp.tool(
                 registered,
                 name=tool_name,
@@ -150,6 +162,7 @@ class ToolRegistrar:
                     tier, title=title, destructive=destructive, idempotent=idempotent
                 ),
                 tags={tier.value, *(tags or set())},
+                **extra,
             )
             self.tiers[tool_name] = tier
             return fn
@@ -164,6 +177,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.READ,
@@ -173,6 +187,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
     def write(
@@ -184,6 +199,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.WRITE,
@@ -193,6 +209,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
     def prompt(
@@ -229,6 +246,7 @@ class ToolRegistrar:
         idempotent: bool | None = None,
         tags: set[str] | None = None,
         description: str | None = None,
+        task: bool = False,
     ) -> Callable[[F], F]:
         return self._register(
             Tier.DANGEROUS,
@@ -238,6 +256,7 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+            task=task,
         )
 
 
