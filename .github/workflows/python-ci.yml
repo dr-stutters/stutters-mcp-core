@@ -11,6 +11,14 @@ on:
       python-version:
         type: string
         default: "3.12"
+      audit:
+        type: boolean
+        default: true
+        description: Run pip-audit on the locked runtime dependencies.
+      audit-ignore:
+        type: string
+        default: ""
+        description: Space-separated vulnerability ids to ignore (e.g. "GHSA-xxxx PYSEC-yyyy"), with a reason in the caller.
     secrets:
       CORE_READ_TOKEN:
         description: Token able to read the private stutters-mcp-core repo (consumers only).
@@ -39,3 +47,14 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest
       - run: uv build
+      - name: Dependency audit (pip-audit)
+        if: inputs.audit
+        env:
+          AUDIT_IGNORE: ${{ inputs.audit-ignore }}
+        run: |
+          # Runtime dependencies from uv.lock, with hashes. stutters-mcp-core is a git dependency (no hash);
+          # its own dependencies are still listed and audited, and core's CI audits core.
+          uv export --no-dev --no-emit-project --no-emit-package stutters-mcp-core --frozen -q -o "$RUNNER_TEMP/requirements.txt"
+          ignore=()
+          for id in $AUDIT_IGNORE; do ignore+=(--ignore-vuln "$id"); done
+          uvx pip-audit==2.9.0 -r "$RUNNER_TEMP/requirements.txt" --disable-pip --progress-spinner off --desc on "${ignore[@]}"
