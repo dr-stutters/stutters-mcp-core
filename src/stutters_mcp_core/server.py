@@ -33,6 +33,7 @@ from stutters_mcp_core import __version__
 from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import UpstreamError
 from stutters_mcp_core.formatting import set_max_chars
+from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
@@ -187,6 +188,9 @@ def _register_status(
             "dangerous_enabled": settings.mcp_enable_dangerous,
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
         }
+        prompts = registered_prompts(reg.mcp)
+        if prompts:
+            out["server"]["prompts"] = sorted(prompts)
         specs = ctx.lifespan_context.get("specs")
         if specs is not None:
             out["server"]["spec_sources"] = list(specs.sources)

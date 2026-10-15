@@ -28,7 +28,7 @@ import json
 import logging
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
@@ -171,6 +171,24 @@ class ToolRegistrar:
             idempotent=idempotent,
             tags=tags,
             description=description,
+        )
+
+    def prompt(
+        self,
+        *,
+        title: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        uses: Iterable[str] | None = None,
+        tools: Iterable[str] = (),
+        tier: Tier = Tier.READ,
+        tags: set[str] | None = None,
+    ) -> Callable[[F], F]:
+        """Register a workflow prompt `<prefix>_<workflow>` (see stutters_mcp_core.prompts)."""
+        from stutters_mcp_core.prompts import PromptRegistrar
+
+        return PromptRegistrar(self.mcp, self.settings, self.prefix).prompt(
+            title=title, name=name, description=description, uses=uses, tools=tools, tier=tier, tags=tags
         )
 
     def dangerous(

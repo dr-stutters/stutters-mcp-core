@@ -5,6 +5,11 @@
     async def test_contract():
         await assert_tool_contract(create_server(settings(writes=True, dangerous=True)), prefix="ise")
 
+    async def test_prompts():                    # every prompt renders; local tool references exist
+        server = create_server(settings(writes=True, dangerous=True))
+        await assert_prompt_contract(server, prefix="ise", known_prefixes={"cml", "ise", "fmc", "catc"},
+                                     samples={"ise_troubleshoot_endpoint_access": {"mac": "0011.2233.4455"}})
+
     @pytest.mark.live
     async def test_live_status():
         s = live_settings(Settings, "ISE_")      # skips unless ISE_URL is set and reachable
@@ -16,6 +21,7 @@ a server's runtime code (it isn't, normally).
 
 from __future__ import annotations
 
+import json
 import re
 import socket
 from typing import Any
@@ -74,6 +80,119 @@ async def tool_contract_problems(mcp: FastMCP[Any], prefix: str) -> list[str]:
             if not (isinstance(schema, dict) and (schema.get("description") or schema.get("enum"))):
                 problems.append(f"{where}: parameter '{pname}' has no description")
     return problems
+
+
+_AUTO_ARG_DOC = "Provide a value matching the following JSON schema"
+_TYPE_SAMPLES = {"integer": "1", "number": "1", "boolean": "true", "array": "[]", "object": "{}"}
+_SCHEMA_RE = re.compile(r"JSON schema: (\{.*\})\. Encode", re.DOTALL)
+
+
+def _sample_value(description: str | None) -> str:
+    """A placeholder FastMCP can convert to the argument's type, read from the JSON schema FastMCP
+    appends to non-string argument descriptions."""
+    m = _SCHEMA_RE.search(description or "")
+    if not m:
+        return "example"
+    try:
+        schema = json.loads(m.group(1))
+    except ValueError:
+        return "example"
+    if schema.get("enum"):
+        first = schema["enum"][0]
+        return first if isinstance(first, str) else json.dumps(first)
+    return _TYPE_SAMPLES.get(str(schema.get("type")), "example")
+
+
+def _rendered_text(result: Any) -> str:
+    parts: list[str] = []
+    for msg in getattr(result, "messages", []):
+        content = getattr(msg, "content", None)
+        parts.append(getattr(content, "text", "") or "")
+    return "\n".join(parts)
+
+
+async def prompt_contract_problems(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *,
+    samples: dict[str, dict[str, str]] | None = None,
+    known_prefixes: set[str] | None = None,
+) -> list[str]:
+    """Everything wrong with the server's prompts: naming, descriptions, argument docs, `uses`
+    metadata, and tool references. Each prompt is rendered with `samples[name]` (string arguments, as
+    a client sends them) or placeholder values; tool names in backticks (`tool_ref`) are collected
+    from the rendered body plus the declared `tools`, then:
+    - references with this server's prefix must be a registered tool or prompt (run with all tiers on);
+    - references with another prefix must be listed in `uses`.
+    `known_prefixes` (e.g. {"cml", "ise", "fmc", "catc"}), when given, also flags `uses` entries outside
+    that set (typos) and finds references to those servers that are missing from `uses`."""
+    from stutters_mcp_core.prompts import find_tool_refs
+
+    problems: list[str] = []
+    samples = samples or {}
+    async with Client(mcp) as client:
+        prompts = await client.list_prompts()
+        local = {t.name for t in await client.list_tools()} | {p.name for p in prompts}
+        for p in prompts:
+            where = f"prompt {p.name}"
+            if not p.name.startswith(prefix + "_") or not NAME_RE.match(p.name):
+                problems.append(f"{where}: name must be snake_case and start with '{prefix}_'")
+            desc = (p.description or "").strip()
+            if not MIN_DESCRIPTION <= len(desc) <= MAX_DESCRIPTION:
+                problems.append(
+                    f"{where}: description length {len(desc)} not in {MIN_DESCRIPTION}..{MAX_DESCRIPTION}"
+                )
+            args = p.arguments or []
+            for a in args:
+                if not (a.description or "").strip() or (a.description or "").startswith(_AUTO_ARG_DOC):
+                    problems.append(f"{where}: argument '{a.name}' has no description")
+            meta = p.meta or {}
+            uses = meta.get("uses")
+            if not isinstance(uses, list) or not uses:
+                problems.append(f"{where}: no `uses` metadata (register via ToolRegistrar.prompt)")
+                uses = [prefix]
+            if prefix not in uses:
+                problems.append(f"{where}: `uses` must include this server's prefix '{prefix}'")
+            if known_prefixes is not None:
+                for u in uses:
+                    if u not in known_prefixes:
+                        problems.append(f"{where}: `uses` names unknown server prefix '{u}'")
+            given = samples.get(p.name, {})
+            # Every argument, optional ones too, so bodies that only break with them are caught.
+            render_args = {a.name: given.get(a.name, _sample_value(a.description)) for a in args}
+            render_args.update(given)
+            refs: list[str] = list(meta.get("tools") or [])
+            try:
+                rendered = await client.get_prompt(p.name, render_args)
+            except Exception as e:  # noqa: BLE001 - report, don't stop the linter
+                problems.append(f"{where}: does not render ({e}); pass samples={{'{p.name}': {{...}}}}")
+            else:
+                text = _rendered_text(rendered)
+                if not text.strip():
+                    problems.append(f"{where}: renders an empty body")
+                all_prefixes = {prefix, *uses, *(known_prefixes or ())}
+                refs += find_tool_refs(text, all_prefixes)
+            for ref in dict.fromkeys(refs):
+                ref_prefix = ref.split("_", 1)[0]
+                if ref_prefix == prefix:
+                    if ref not in local:
+                        problems.append(f"{where}: references unknown local tool '{ref}'")
+                elif ref_prefix not in uses:
+                    problems.append(f"{where}: references '{ref}' but '{ref_prefix}' is not in `uses`")
+    return problems
+
+
+async def assert_prompt_contract(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *,
+    samples: dict[str, dict[str, str]] | None = None,
+    known_prefixes: set[str] | None = None,
+) -> None:
+    """Fail with every prompt contract violation (see `prompt_contract_problems`). Pass
+    `known_prefixes={"cml", "ise", "fmc", "catc"}` so references to servers missing from `uses` are found."""
+    problems = await prompt_contract_problems(mcp, prefix, samples=samples, known_prefixes=known_prefixes)
+    assert not problems, "Prompt contract violations:\n  " + "\n  ".join(problems)
 
 
 async def assert_tool_contract(mcp: FastMCP[Any], prefix: str) -> None:
