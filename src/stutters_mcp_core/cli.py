@@ -196,7 +196,8 @@ def run_cli(
         auth = build_auth(settings, tokens)
     except Exception as e:  # noqa: BLE001 - e.g. OIDC discovery failed
         sys.exit(f"{prog}: OAuth setup failed: {scrub_text(str(e))}")
-    assert auth is not None
+    if auth is None:  # unreachable: tokens or OAuth were checked above
+        sys.exit(f"{prog}: no HTTP authentication configured")
     if settings.mcp_oauth_provider:
         log.info(
             "OAuth (%s) on: base URL %s, allowed users: %s",
@@ -204,7 +205,7 @@ def run_cli(
             settings.mcp_oauth_base_url,
             settings.mcp_oauth_allowed_users,
         )
-    if settings.mcp_two_person_tools and len(tokens) < 2:
+    if settings.mcp_two_person_tools and len(tokens) < 2 and not settings.mcp_oauth_provider:
         log.warning(
             "MCP_TWO_PERSON_TOOLS is set but only one token is configured: nobody can approve those changes. "
             "Give each person their own token (the identity is the token name)."

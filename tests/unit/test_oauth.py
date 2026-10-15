@@ -46,7 +46,7 @@ def oauth_settings(tmp_path: Path, **kw: Any) -> Any:
         "mcp_oauth_allowed_users": "octocat,ops-*",
         "mcp_oauth_storage_dir": tmp_path / "oauth",
         "mcp_oauth_redirect_uris": "http://localhost:*",
-        "mcp_oauth_jwt_key": "test-jwt-signing-key-0123456789",
+        "mcp_oauth_jwt_key": "test-jwt-signing-key-0123456789-abcdefgh",
     }
     base.update(kw)
     return make_settings(**base)
@@ -194,6 +194,7 @@ def test_allow_list_globs(tmp_path: Path) -> None:
         ({"mcp_oauth_client_secret": None}, "MCP_OAUTH_CLIENT_SECRET"),
         ({"mcp_oauth_base_url": "http://mcp.example.com"}, "must be https"),
         ({"mcp_oauth_provider": "oidc"}, "MCP_OAUTH_CONFIG_URL"),
+        ({"mcp_oauth_jwt_key": "short"}, "at least 32"),
     ],
 )
 def test_settings_validation(tmp_path: Path, kw: dict[str, Any], error: str) -> None:
@@ -214,3 +215,50 @@ async def test_current_caller_uses_identity_claim(monkeypatch: pytest.MonkeyPatc
     plain = AccessToken(token="x", client_id="alice", scopes=[])
     monkeypatch.setattr("fastmcp.server.dependencies.get_access_token", lambda: plain)
     assert inbound_auth.current_caller() == "alice"
+
+
+def test_login_claims_are_provider_specific() -> None:
+    from fastmcp.server.auth.auth import AccessToken
+
+    from stutters_mcp_core.oauth import login_of
+
+    def tok(**claims: Any) -> AccessToken:
+        return AccessToken(token="x", client_id="c", scopes=[], claims=claims)
+
+    # GitHub: only `login` counts (an email claim is ignored)
+    assert login_of(tok(login="OctoCat", email="x@y"), "github") == "octocat"
+    assert login_of(tok(email="x@y"), "github") is None
+    # OIDC default: a verified email only
+    assert login_of(tok(email="Alice@Example.com", email_verified=True), "oidc") == "alice@example.com"
+    assert login_of(tok(email="alice@example.com"), "oidc") is None
+    assert login_of(tok(preferred_username="alice@example.com"), "oidc") is None
+    # OIDC with an explicit stable claim
+    assert login_of(tok(oid="1234-abcd"), "oidc", "oid") == "1234-abcd"
+
+
+def test_allow_list_by_stable_id(tmp_path: Path) -> None:
+    auth = build_auth(oauth_settings(tmp_path, mcp_oauth_allowed_users="id:583231"), {})
+    assert isinstance(auth, StuttersMultiAuth)
+    assert auth.allowed("renamed-user", "583231") and not auth.allowed("octocat", "999")
+
+
+async def test_identity_claim_cannot_be_spoofed(tmp_path: Path) -> None:
+    from fastmcp.server.auth.auth import AccessToken, TokenVerifier
+
+    class Upstream(TokenVerifier):
+        async def verify_token(self, token: str) -> AccessToken | None:
+            return AccessToken(
+                token=token,
+                client_id="1",
+                scopes=["user"],
+                claims={"login": "octocat", IDENTITY_CLAIM: "admin"},
+            )
+
+    auth = StuttersMultiAuth(provider="github", allowed_users=["octocat"], verifiers={"github": Upstream()})
+    result = await auth.verify_token("t")
+    assert result is not None and result.claims[IDENTITY_CLAIM] == "github:octocat"
+
+
+def test_storage_is_private(tmp_path: Path) -> None:
+    build_auth(oauth_settings(tmp_path), {})
+    assert ((tmp_path / "oauth").stat().st_mode & 0o777) == 0o700

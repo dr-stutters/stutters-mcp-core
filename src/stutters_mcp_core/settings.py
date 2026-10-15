@@ -171,6 +171,7 @@ class BaseServerSettings(BaseSettings):
         default=None, validation_alias=_alias("MCP_OAUTH_ALLOWED_USERS")
     )
     mcp_oauth_scopes: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_SCOPES"))
+    mcp_oauth_login_claim: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_LOGIN_CLAIM"))
     mcp_oauth_redirect_uris: str | None = Field(
         default=None, validation_alias=_alias("MCP_OAUTH_REDIRECT_URIS")
     )
@@ -247,6 +248,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_oauth_config_url",
         "mcp_oauth_allowed_users",
         "mcp_oauth_scopes",
+        "mcp_oauth_login_claim",
         "mcp_oauth_redirect_uris",
         mode="before",
     )
@@ -290,6 +292,10 @@ class BaseServerSettings(BaseSettings):
             missing.append("MCP_OAUTH_CLIENT_SECRET (or MCP_OAUTH_JWT_KEY for a public client)")
         if missing:
             raise ValueError(f"MCP_OAUTH_PROVIDER={self.mcp_oauth_provider} also needs {', '.join(missing)}")
+        if self.mcp_oauth_jwt_key is not None and len(self.mcp_oauth_jwt_key.get_secret_value()) < 32:
+            raise ValueError(
+                "MCP_OAUTH_JWT_KEY must be at least 32 characters (e.g. openssl rand -base64 32)"
+            )
         if self.mcp_oauth_base_url and not self.mcp_oauth_base_url.startswith(
             ("https://", "http://localhost", "http://127.0.0.1")
         ):
