@@ -249,3 +249,34 @@ async def test_status_reports_server_version(api: Any) -> None:
     assert data["server"]["server_version"] == "9.9.9"
     unknown = await call_tool(create_server(make_settings()), "demo_status")
     assert unknown["server"]["server_version"] is None  # demo-mcp-server isn't an installed distribution
+
+
+async def test_spec_tool_examples_are_product_specific_or_neutral(api: Any) -> None:
+    from dataclasses import replace
+
+    from stutters_mcp_core import build_server
+    from stutters_mcp_core.spec import SpecSource
+
+    from .demo import SPEC, SPEC_DOC, DemoApp
+
+    async def load(app: Any) -> Any:
+        return SPEC_DOC
+
+    def schema_text(server: Any) -> str:
+        return json.dumps([t.input_schema for t in server])
+
+    neutral = create_server(make_settings())
+    async with Client(neutral) as c:
+        text = schema_text(await c.list_tools())
+    assert "network device group" not in text and "/api/v1/endpoint" not in text
+
+    custom = build_server(
+        replace(SPEC, spec_search_example="lab node", spec_path_example="/labs/{lab_id}"),
+        make_settings(),
+        client_factory=DemoApp,
+        register=[],
+        spec_sources=lambda app: [SpecSource("main", load, client=lambda a: a.api)],
+    )
+    async with Client(custom) as c:
+        text = schema_text(await c.list_tools())
+    assert "lab node" in text and "/labs/{lab_id}" in text

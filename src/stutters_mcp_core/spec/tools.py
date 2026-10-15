@@ -46,7 +46,7 @@ def validate_path(path: str) -> str:
         or re.search(r"%(2e|2f|5c)", path, re.IGNORECASE)
     ):
         raise InvalidRequest(
-            f"Invalid path {path!r}: give a path relative to the API base (e.g. '/api/v1/endpoint'), "
+            f"Invalid path {path!r}: give a path relative to the API base (as shown by the search tool), "
             "without scheme, host or query string (use `params` for the query)."
         )
     if "{" in path:
@@ -54,7 +54,25 @@ def validate_path(path: str) -> str:
     return "/" + path.lstrip("/")
 
 
-def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = True) -> None:
+def register_spec_tools(
+    reg: ToolRegistrar,
+    *,
+    product: str,
+    api_call: bool = True,
+    search_example: str | None = None,
+    path_example: str | None = None,
+) -> None:
+    """`search_example` (e.g. "network device group") and `path_example` (e.g. "/api/v1/endpoint/{id}")
+    make the descriptions product-specific; without them the text stays neutral."""
+    query_desc = (
+        f"Keywords, e.g. {search_example!r}"
+        if search_example
+        else "Keywords naming the resource or action you need"
+    )
+    path_desc = (
+        f"('{path_example}')" if path_example else "(as listed by the search tool, e.g. '/<resource>/{id}')"
+    )
+
     prefix = reg.prefix
     settings = reg.settings
 
@@ -68,7 +86,7 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
     )
     async def search_spec(
         ctx: Context,
-        query: Annotated[str, Field(description="Keywords, e.g. 'network device group' or 'sgt mapping'")],
+        query: Annotated[str, Field(description=query_desc)],
         source: Annotated[str | None, Field(description="Limit to one API surface/spec (see status)")] = None,
         limit: Annotated[int, Field(ge=1, le=100)] = 20,
     ) -> dict[str, Any]:
@@ -96,7 +114,7 @@ def register_spec_tools(reg: ToolRegistrar, *, product: str, api_call: bool = Tr
         ctx: Context,
         name: Annotated[
             str,
-            Field(description="A schema name, a path ('/api/v1/endpoint/{id}'), or 'METHOD /path'"),
+            Field(description=f"A schema name, a path {path_desc}, or 'METHOD /path'"),
         ],
         source: Annotated[str | None, Field(description="API surface/spec to look in")] = None,
         examples: Annotated[
