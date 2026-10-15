@@ -214,19 +214,26 @@ automation keeps its named tokens (`MCP_AUTH_TOKENS`). Both are accepted at once
 | `MCP_OAUTH_CLIENT_ID` | `Ov23li...` | from the OAuth app you register (steps below) |
 | `MCP_OAUTH_CLIENT_SECRET` / `_FILE` | | required for GitHub; for OIDC optional with `MCP_OAUTH_JWT_KEY` (public client) |
 | `MCP_OAUTH_BASE_URL` | `https://mcp.lab.example:8443` | public URL clients use; must be `https://` (or `http://localhost`) |
-| `MCP_OAUTH_ALLOWED_USERS` | `octocat,ops-*` | **required**: logins allowed in (globs, case-insensitive). Anyone else the IdP authenticates gets 401 |
+| `MCP_OAUTH_ALLOWED_USERS` | `octocat,id:583231` | **required**: who may log in. Shell globs over the login (case-insensitive; `*`, `?`, `[...]`), or `id:<n>` for the IdP's stable user id (GitHub numeric id: survives renames and can't be re-registered by someone else, so prefer it). Anyone else the IdP authenticates gets 401. A bare `*` logs a warning |
+| `MCP_OAUTH_LOGIN_CLAIM` | `oid` | `oidc` only: the claim used as the login. Default `email`, accepted only with `email_verified: true`. Prefer a stable, admin-controlled claim (Entra `oid`, Keycloak `sub`) |
 | `MCP_OAUTH_CONFIG_URL` | `https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration` | `oidc` only |
 | `MCP_OAUTH_SCOPES` | `read:user` | IdP scopes to require (GitHub default `user`; OIDC default `openid`) |
-| `MCP_OAUTH_REDIRECT_URIS` | `http://localhost:*,http://127.0.0.1:*` | MCP-client redirect URIs allowed to register (default: any) |
-| `MCP_OAUTH_JWT_KEY` / `_FILE` | 32+ random chars | signs the tokens this server issues; default derived from the client secret. Set it so tokens survive secret rotation |
-| `MCP_OAUTH_STORAGE_DIR` | `/cache/oauth` | encrypted client registrations and upstream tokens (must be writable and persistent; the image's `/cache` volume works) |
+| `MCP_OAUTH_REDIRECT_URIS` | `http://localhost:*,https://claude.ai/api/mcp/auth_callback` | MCP-client redirect URIs allowed to register. Default: loopback only (`http://localhost:*`, `http://127.0.0.1:*`), which covers Claude Code and Desktop. `*` allows anything (warned) |
+| `MCP_OAUTH_JWT_KEY` / `_FILE` | `openssl rand -base64 32` | signs the tokens this server issues and keys the storage encryption; at least 32 characters. Default: derived from the client secret. Set it so tokens survive secret rotation |
+| `MCP_OAUTH_STORAGE_DIR` | `/cache/oauth` | encrypted client registrations and upstream tokens, directory mode 0700. Default `<MCP_CACHE_DIR>/oauth` (in the image: the persistent `/cache` volume) |
 
 How it works: FastMCP's OAuth proxy publishes OAuth metadata (`/.well-known/oauth-authorization-server`),
 lets MCP clients register themselves (dynamic client registration), shows a consent page, sends the user to
 the IdP, and issues the client its own short-lived token bound to the upstream one, which it re-checks on
 each request. The caller identity is `<provider>:<login>` (`github:octocat`, `oidc:alice@example.com`):
 use it in `MCP_ROLES` (`github:octocat:rw`), and it appears in previews, two-person confirms and the audit
-log. Named-token callers keep their token name.
+log. Logins are lowercased (`MCP_ROLES` entries should be lowercase too). Named-token callers keep their token name.
+
+Notes: dynamic client registration is unauthenticated by design (MCP clients register themselves), and a
+user the IdP authenticates but the allow-list rejects can still complete the login dance (they get 401 on
+every request, and their upstream token sits encrypted in storage until it expires). Put the server behind a
+reverse proxy with rate limiting if it is reachable beyond your network. Named bearer tokens satisfy the
+IdP-scope check (they are trusted as before).
 
 ### Steps for the repo owner (not done overnight: needs your GitHub account)
 
@@ -243,17 +250,20 @@ log. Named-token callers keep their token name.
    and `openssl rand -base64 32 > secrets/<server>_oauth_jwt_key`; mount both and set
    `MCP_OAUTH_CLIENT_SECRET_FILE=/run/secrets/<server>_oauth_secret`, `MCP_OAUTH_JWT_KEY_FILE=/run/secrets/<server>_oauth_jwt_key`.
 4. In `.env`: `MCP_OAUTH_PROVIDER=github`, `MCP_OAUTH_CLIENT_ID=<client id>`, `MCP_OAUTH_BASE_URL=<base URL>`,
-   `MCP_OAUTH_ALLOWED_USERS=<your GitHub login>`, `MCP_OAUTH_STORAGE_DIR=/cache/oauth`; optionally
+   `MCP_OAUTH_ALLOWED_USERS=id:<your numeric GitHub id>` (`curl https://api.github.com/users/<login>` shows it), `MCP_OAUTH_STORAGE_DIR=/cache/oauth`; optionally
    `MCP_ROLES=github:<login>:admin`. Keep `MCP_AUTH_TOKENS` for scripts. `docker compose up -d`.
 5. Client: `claude mcp add --transport http ise <base URL>/mcp` (no header), then `/mcp` in Claude Code →
    *Authenticate*; the browser opens the consent page, then GitHub. `ise_status` shows `server.access` with
    `github:<login>` when roles are on.
 
-**OIDC (e.g. Entra ID).** Register an app (Entra: *App registrations → New*, platform *Web*, redirect URI
+**OIDC (e.g. Entra ID; not tested against a real tenant).** Use a **single-tenant** app and config URL (a
+multi-tenant `common` endpoint would admit other tenants' users). Register an app (Entra: *App registrations → New*, platform *Web*, redirect URI
 `<base URL>/auth/callback`, create a client secret); set `MCP_OAUTH_PROVIDER=oidc`,
 `MCP_OAUTH_CONFIG_URL=https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration`,
-`MCP_OAUTH_CLIENT_ID`, `MCP_OAUTH_CLIENT_SECRET_FILE`, `MCP_OAUTH_SCOPES=openid,profile,email`, and allow-list
-logins as they appear in `preferred_username`/`email` (e.g. `*@example.com`).
+`MCP_OAUTH_CLIENT_ID`, `MCP_OAUTH_CLIENT_SECRET_FILE`, `MCP_OAUTH_LOGIN_CLAIM=oid`, and allow-list the users'
+object ids. Entra access tokens for the default Graph audience can't be validated by JWKS: *Expose an API*
+on the app registration, add a scope (e.g. `api://<client-id>/mcp`), and set
+`MCP_OAUTH_SCOPES=api://<client-id>/mcp,openid,offline_access` (offline_access for refresh tokens).
 
 Tested in CI with a mocked GitHub: registration, consent, callback, PKCE token exchange, MCP request with the
 issued token, named tokens alongside, and an authenticated-but-not-allowed login refused (tests/unit/test_oauth.py).
