@@ -72,6 +72,47 @@ class BaseServerSettings(BaseSettings):
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
+    # --- events (ADR-003); receivers are off by default --------------------------------------
+    mcp_event_buffer_size: int = Field(
+        default=5000, ge=10, le=1_000_000, validation_alias=_alias("MCP_EVENT_BUFFER_SIZE")
+    )
+    mcp_webhooks_enabled: bool = Field(default=False, validation_alias=_alias("MCP_WEBHOOKS_ENABLED"))
+    mcp_webhook_path: str = Field(default="/events", validation_alias=_alias("MCP_WEBHOOK_PATH"))
+    # Unset: the routes live on the MCP HTTP app. Set: a dedicated listener (also with stdio).
+    mcp_webhook_host: str = Field(default="127.0.0.1", validation_alias=_alias("MCP_WEBHOOK_HOST"))
+    mcp_webhook_port: int | None = Field(
+        default=None, ge=0, le=65535, validation_alias=_alias("MCP_WEBHOOK_PORT")
+    )
+    # "source:secret" entries (basic auth: "source:user:password"), comma/newline separated.
+    mcp_webhook_secrets: SecretStr | None = Field(
+        default=None, validation_alias=_alias("MCP_WEBHOOK_SECRETS")
+    )
+    mcp_webhook_allow_ips: str = Field(default="", validation_alias=_alias("MCP_WEBHOOK_ALLOW_IPS"))
+    mcp_webhook_max_body: int = Field(
+        default=262_144, ge=1024, le=16 * 1024 * 1024, validation_alias=_alias("MCP_WEBHOOK_MAX_BODY")
+    )
+    mcp_webhook_rate_limit: float | None = Field(
+        default=20.0, gt=0, validation_alias=_alias("MCP_WEBHOOK_RATE_LIMIT")
+    )  # requests/second per source
+    mcp_syslog_enabled: bool = Field(default=False, validation_alias=_alias("MCP_SYSLOG_ENABLED"))
+    mcp_syslog_host: str = Field(default="127.0.0.1", validation_alias=_alias("MCP_SYSLOG_HOST"))
+    mcp_syslog_udp_port: int | None = Field(
+        default=5514, ge=0, le=65535, validation_alias=_alias("MCP_SYSLOG_UDP_PORT")
+    )
+    mcp_syslog_tcp_port: int | None = Field(
+        default=5514, ge=0, le=65535, validation_alias=_alias("MCP_SYSLOG_TCP_PORT")
+    )
+    mcp_syslog_allow_ips: str = Field(default="", validation_alias=_alias("MCP_SYSLOG_ALLOW_IPS"))
+    mcp_syslog_rate_limit: float | None = Field(
+        default=500.0, gt=0, validation_alias=_alias("MCP_SYSLOG_RATE_LIMIT")
+    )  # messages/second per sender
+    mcp_syslog_max_message: int = Field(
+        default=16_384, ge=480, le=1024 * 1024, validation_alias=_alias("MCP_SYSLOG_MAX_MESSAGE")
+    )
+    mcp_syslog_max_connections: int = Field(
+        default=64, ge=1, le=10_000, validation_alias=_alias("MCP_SYSLOG_MAX_CONNECTIONS")
+    )
+
     @field_validator("url")
     @classmethod
     def _normalise_url(cls, v: str) -> str:
@@ -92,6 +133,37 @@ class BaseServerSettings(BaseSettings):
                 raw = raw[len(prefix) :].strip()
         return SecretStr(raw) if raw else None
 
+    @field_validator(
+        "mcp_webhook_port",
+        "mcp_syslog_udp_port",
+        "mcp_syslog_tcp_port",
+        "mcp_webhook_rate_limit",
+        "mcp_syslog_rate_limit",
+        mode="before",
+    )
+    @classmethod
+    def _empty_is_none(cls, v: object) -> object:
+        # An empty value (or "off") disables a port or a rate limit.
+        if isinstance(v, str) and v.strip().lower() in ("", "off", "none"):
+            return None
+        return v
+
+    @field_validator("mcp_webhook_allow_ips", "mcp_syslog_allow_ips")
+    @classmethod
+    def _valid_networks(cls, v: str) -> str:
+        from stutters_mcp_core.events.limits import parse_networks
+
+        parse_networks(v)
+        return v
+
+    @field_validator("mcp_webhook_path")
+    @classmethod
+    def _webhook_path(cls, v: str) -> str:
+        v = "/" + v.strip().strip("/")
+        if v == "/" or not all(part.replace("-", "").replace("_", "").isalnum() for part in v[1:].split("/")):
+            raise ValueError("MCP_WEBHOOK_PATH must be a path such as /events")
+        return v
+
     @field_validator("mcp_cache_dir", "ca_bundle", mode="before")
     @classmethod
     def _empty_path_is_none(cls, v: object) -> object:
@@ -103,6 +175,17 @@ class BaseServerSettings(BaseSettings):
     def _dangerous_needs_writes(self) -> BaseServerSettings:
         if self.mcp_enable_dangerous and not self.mcp_enable_writes:
             raise ValueError("MCP_ENABLE_DANGEROUS=true also requires MCP_ENABLE_WRITES=true")
+        return self
+
+    @model_validator(mode="after")
+    def _receivers_consistent(self) -> BaseServerSettings:
+        hook, mcp = self.mcp_webhook_path.rstrip("/"), "/" + self.mcp_path.strip("/")
+        if hook == "/health" or hook == mcp or hook.startswith(mcp + "/") or mcp.startswith(hook + "/"):
+            raise ValueError("MCP_WEBHOOK_PATH must not overlap MCP_PATH or /health")
+        if self.mcp_syslog_enabled and self.mcp_syslog_udp_port is None and self.mcp_syslog_tcp_port is None:
+            raise ValueError("MCP_SYSLOG_ENABLED=true needs MCP_SYSLOG_UDP_PORT and/or MCP_SYSLOG_TCP_PORT")
+        if self.mcp_webhook_secrets is not None:
+            self.webhook_secrets()  # validates the format
         return self
 
     # --- helpers -------------------------------------------------------------------------
@@ -136,6 +219,13 @@ class BaseServerSettings(BaseSettings):
         if self.mcp_auth_tokens_file is not None:
             spec += "\n" + self.mcp_auth_tokens_file.read_text()
         return parse_tokens(spec)
+
+    def webhook_secrets(self) -> dict[str, str]:
+        """MCP_WEBHOOK_SECRETS as {source: secret}; raises ValueError if malformed."""
+        from stutters_mcp_core.events.webhook import parse_webhook_secrets
+
+        spec = self.mcp_webhook_secrets.get_secret_value() if self.mcp_webhook_secrets else ""
+        return parse_webhook_secrets(spec)
 
     def cache_dir_for(self, server_name: str) -> Path | None:
         """MCP_CACHE_DIR if set, else ~/.cache/<server_name>. Set MCP_CACHE_DIR="" to disable."""

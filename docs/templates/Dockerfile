@@ -40,6 +40,8 @@ ENV PATH=/app/.venv/bin:$PATH \
 USER mcp
 WORKDIR /app
 EXPOSE 8000
+# Optional event receivers, when enabled (docs/adr/003-events.md): syslog and a dedicated webhook port.
+# EXPOSE 5514/tcp 5514/udp 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('MCP_PORT', '8000')}/health\", timeout=3)"]

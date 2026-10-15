@@ -10,10 +10,12 @@
             register=[system.register, sessions.register, ...],   # each takes a ToolRegistrar
             status=IseClient.status,                 # async (app) -> dict, shown by ise_status
             spec_sources=ise_spec_sources,           # (app) -> list[SpecSource]; adds spec tools
+            event_sources=ise_event_sources,         # (app) -> list[EventSource]; adds event tools
             auth=auth,
         )
 
-Lifespan context keys available to tools: "client" (the app object), "previews", "specs", "settings".
+Lifespan context keys available to tools: "client" (the app object), "previews", "specs", "settings",
+"events" (the EventHub, with event_sources).
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from starlette.responses import JSONResponse
 from stutters_mcp_core import __version__
 from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import UpstreamError
+from stutters_mcp_core.events.hub import EventHub, EventOptions, EventSources
+from stutters_mcp_core.events.tools import register_event_tools
 from stutters_mcp_core.formatting import set_max_chars
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.settings import BaseServerSettings
@@ -93,10 +97,17 @@ def build_server(
     register: Iterable[Registrar],
     status: StatusFn | None = None,
     spec_sources: SpecSources | None = None,
+    event_sources: EventSources | None = None,
+    event_options: EventOptions | None = None,
     auth: AuthProvider | None = None,
 ) -> FastMCP[Any]:
+    """`event_sources(app)` returns the server's EventSources (pollers, SyslogReceiver,
+    WebhookReceiver...); they run while the server runs, and the generic event tools are added
+    (names per `event_options`). See docs/adr/003-events.md."""
     set_max_chars(settings.mcp_max_response_chars)
     cache_dir = settings.cache_dir_for(spec.name)
+    hub = EventHub(spec.prefix, settings) if event_sources is not None else None
+    options = event_options or EventOptions()
 
     @lifespan
     async def server_lifespan(server: FastMCP[Any]) -> AsyncIterator[dict[str, Any]]:
@@ -119,9 +130,17 @@ def build_server(
         }
         if spec_sources is not None:
             state["specs"] = SpecStore(app, spec_sources(app), cache_dir, settings.url)
+        if hub is not None and event_sources is not None:
+            state["events"] = hub
+            try:
+                await hub.start(event_sources(app))
+            except Exception as e:  # noqa: BLE001 - events are optional; the tools still work
+                log.error("event sources failed to start: %s", e)
         try:
             yield state
         finally:
+            if hub is not None:
+                await hub.stop()
             await _aclose(app)
 
     instructions = spec.instructions.rstrip() + "\n"
@@ -129,6 +148,14 @@ def build_server(
         instructions += spec.write_instructions
     if settings.mcp_enable_dangerous:
         instructions += DANGEROUS_INSTRUCTIONS
+    list_tool = options.name(options.list_tool, spec.prefix)
+    if hub is not None and list_tool:
+        sources_tool = options.name(options.sources_tool, spec.prefix) or f"{spec.prefix}_status"
+        instructions += (
+            f"\nEvents: {list_tool} reads recent {spec.product} events from an in-memory buffer (filter by "
+            f"type, key such as ip=/mac=/user=, time; after_seq= for only new ones); {sources_tool} shows "
+            "whether each event source is connected.\n"
+        )
 
     mcp: FastMCP[Any] = FastMCP(
         name=spec.name,
@@ -145,12 +172,21 @@ def build_server(
         """Liveness for Docker/load balancers. Unauthenticated, so it reveals nothing upstream."""
         return JSONResponse({"status": "ok"})
 
+    if hub is not None and settings.mcp_webhooks_enabled and settings.mcp_webhook_port is None:
+        # Outside MCP bearer auth by design: each webhook source authenticates itself (ADR-003).
+        mcp.custom_route(
+            f"{settings.mcp_webhook_path}/{{source}}", methods=["POST"], include_in_schema=False
+        )(hub.handle_webhook)
+        hub.mounted_on_mcp_app = settings.mcp_transport == "http"
+
     reg = ToolRegistrar(mcp, settings, spec.prefix)
     _register_status(reg, spec, settings, status)
     for fn in register:
         fn(reg)
     if spec_sources is not None:
         register_spec_tools(reg, product=spec.product)
+    if hub is not None:
+        register_event_tools(reg, hub, options, spec.product)
     return mcp
 
 
@@ -191,6 +227,9 @@ def _register_status(
         prompts = registered_prompts(reg.mcp)
         if prompts:
             out["server"]["prompts"] = sorted(prompts)
+        events = ctx.lifespan_context.get("events")
+        if events is not None:
+            out["server"]["events"] = events.brief()
         specs = ctx.lifespan_context.get("specs")
         if specs is not None:
             out["server"]["spec_sources"] = list(specs.sources)
