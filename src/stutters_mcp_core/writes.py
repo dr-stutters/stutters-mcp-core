@@ -42,6 +42,7 @@ from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
 from stutters_mcp_core.secrets import scrub_text
+from stutters_mcp_core.targets import target_name
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -114,6 +115,7 @@ class ToolRegistrar:
         mcp._stutters_withheld = withheld  # type: ignore[attr-defined]
         self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
         self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
+        self.target_names: list[str] = settings.target_names()  # >1: tools get a `target` argument
 
     def _register(
         self,
@@ -135,8 +137,13 @@ class ToolRegistrar:
             if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
                 self.withheld[tool_name] = tier
                 return fn
+            registered: Callable[..., Any] = fn
+            if len(self.target_names) > 1:
+                from stutters_mcp_core.targets import with_target_argument
+
+                registered = with_target_argument(fn, self.target_names, self.target_names[0])
             self.mcp.tool(
-                fn,
+                registered,
                 name=tool_name,
                 description=description,
                 annotations=annotations_for(
@@ -384,6 +391,8 @@ async def preview_or_apply(
     blast-radius limits and two-person confirmation. With no rails configured the output is unchanged."""
     store = get_previews(ctx)
     caller = current_caller()
+    target = target_name()
+    token_tool = tool if target is None else f"{tool}@{target}"  # a token only works on its target
     policy = _policy_for(ctx)
     tier = _tier_of(ctx, tool)
     info: dict[str, Any] = {}
@@ -395,6 +404,8 @@ async def preview_or_apply(
         blockers += policy_blockers
         two_person = bool(info.get("two_person"))
     extra: dict[str, Any] = {}
+    if target is not None:
+        extra["instance"] = target
     if info:
         extra["policy"] = info
     elif plan.blast_radius is not None:
@@ -405,6 +416,8 @@ async def preview_or_apply(
 
     if confirm is None:
         out: dict[str, Any] = {"status": "preview", "action": plan.summary}
+        if target is not None:
+            out["instance"] = target
         if plan.details:
             out["preview"] = plan.details
         if plan.side_effects:
@@ -428,7 +441,7 @@ async def preview_or_apply(
             )
             _emit(ctx, "preview", tool, caller, plan.summary, **extra)
             return out
-        token = store.issue(tool, args, plan.fingerprint, caller, two_person=two_person)
+        token = store.issue(token_tool, args, plan.fingerprint, caller, two_person=two_person)
         out["confirm"] = token
         out["expires_in_seconds"] = int(store.ttl)
         if two_person:
@@ -461,7 +474,7 @@ async def preview_or_apply(
     if blockers:
         _emit(ctx, "refused", tool, caller, plan.summary, reasons=blockers, **extra)
         raise InvalidRequest(f"Can't apply: {'; '.join(blockers)}. Nothing was changed.")
-    pending = store.redeem(confirm, tool, args, plan.fingerprint, caller)
+    pending = store.redeem(confirm, token_tool, args, plan.fingerprint, caller)
     if pending.two_person:
         extra["requested_by"] = pending.caller
         extra["approved_by"] = caller
@@ -472,6 +485,8 @@ async def preview_or_apply(
         raise
     _emit(ctx, "applied", tool, caller, plan.summary, **extra)
     out = {"status": "applied", "action": plan.summary}
+    if target is not None:
+        out["instance"] = target
     if pending.two_person:
         out["requested_by"] = pending.caller
         out["approved_by"] = caller
