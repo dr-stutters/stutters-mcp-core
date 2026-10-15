@@ -109,6 +109,8 @@ class FmcApp:
 
 - Login flows use `client.send_raw` (no auth or retry recursion) and `client.error_from_response`.
 - Several surfaces (ISE) mean several ApiClients, optionally sharing one RateLimiter.
+- One pager per paging style is enough: endpoints with a smaller page-size cap pass it per call,
+  `await app.pager.fetch_page(app.api, path, params, limit=limit, offset=offset, max_page=25)` (also `fetch_all(..., max_page=)`).
 - `error_detail=` is a function that pulls a readable message out of the product's error body.
 
 ## 5. Tools
