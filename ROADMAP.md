@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15 (per-server roadmaps added). Current releases: core v0.1.2, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+_Last updated 2026-10-15 (per-server roadmaps added). Current releases: core v0.2.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -28,11 +28,11 @@ Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or ne
 ### Now
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C1](https://github.com/dr-stutters/stutters-mcp-core/issues/6) | **Bump all servers to core v0.1.2** | `list_result` keeps `Page.more`; CatC lists without a total stop looking complete | none | S |
-| [C2](https://github.com/dr-stutters/stutters-mcp-core/issues/7) | **MCP prompts support**: `PromptRegistrar` with naming (`<prefix>_<workflow>`), argument docs, and a contract-linter extension (description, arguments, which servers a prompt expects) | Workflows ship as prompts in each server | none | S |
-| [C3](https://github.com/dr-stutters/stutters-mcp-core/issues/8) | **Event framework v1**: `EventSource` base (a background task started and stopped by the lifespan, reconnect with backoff), `EventBuffer` (bounded ring buffer; per-source cursor; filters by time, type and key), generic tools `<prefix>_list_events` / `<prefix>_event_sources` (status, lag, drops), MCP resource `events://<prefix>/recent` | One pattern for pxGrid, webhooks, syslog and the CML websocket | none (each source lists its own) | M |
-| [C4](https://github.com/dr-stutters/stutters-mcp-core/issues/9) | **Inbound receivers in core**: a `WebhookReceiver` (Starlette route on the existing HTTP app, per-source shared-secret/HMAC or basic auth, allow-listed source IPs) and a `SyslogReceiver` (UDP/TCP listener, RFC 5424/3164 parsing, per-sender allow-list) | CatC webhooks, FMC syslog | A port reachable from the appliance; firewall rules | M |
-| [C5](https://github.com/dr-stutters/stutters-mcp-core/issues/10) | **`fetch_page(max_page=...)` override** (deferred request from CatC) | Per-endpoint page caps without several pagers | none | S |
+| [C1](https://github.com/dr-stutters/stutters-mcp-core/issues/6) | **Bump all servers to core v0.1.2** (core side done; each server's Phase 3 builder bumps its pin, v0.2.0 recommended) | `list_result` keeps `Page.more`; CatC lists without a total stop looking complete | none | S |
+| ✅ [C2](https://github.com/dr-stutters/stutters-mcp-core/issues/7) | **MCP prompts support** (✅ v0.2.0): `PromptRegistrar` with naming (`<prefix>_<workflow>`), argument docs, and a contract-linter extension (description, arguments, which servers a prompt expects) | Workflows ship as prompts in each server | none | S |
+| ✅ [C3](https://github.com/dr-stutters/stutters-mcp-core/issues/8) | **Event framework v1** (✅ v0.2.0): `EventSource` base (a background task started and stopped by the lifespan, reconnect with backoff), `EventBuffer` (bounded ring buffer; per-source cursor; filters by time, type and key), generic tools `<prefix>_list_events` / `<prefix>_event_sources` (status, lag, drops), MCP resource `events://<prefix>/recent` | One pattern for pxGrid, webhooks, syslog and the CML websocket | none (each source lists its own) | M |
+| ✅ [C4](https://github.com/dr-stutters/stutters-mcp-core/issues/9) | **Inbound receivers in core** (✅ v0.2.0): a `WebhookReceiver` (Starlette route on the existing HTTP app, per-source shared-secret/HMAC or basic auth, allow-listed source IPs) and a `SyslogReceiver` (UDP/TCP listener, RFC 5424/3164 parsing, per-sender allow-list) | CatC webhooks, FMC syslog | A port reachable from the appliance; firewall rules | M |
+| ✅ [C5](https://github.com/dr-stutters/stutters-mcp-core/issues/10) | **`fetch_page(max_page=...)` override** (deferred request from CatC) (✅ v0.2.0) | Per-endpoint page caps without several pagers | none | S |
 
 ### Next
 | # | Item | Why | External needs | Size |

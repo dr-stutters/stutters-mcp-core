@@ -34,7 +34,7 @@ dependencies = ["stutters-mcp-core"]
 ise-mcp-server = "ise_mcp:main"
 
 [tool.uv.sources]
-stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.1.0" }
+stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.2.0" }
 # while co-developing core locally instead:
 # stutters-mcp-core = { path = "../stutters-mcp-core", editable = true }
 
