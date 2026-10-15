@@ -70,6 +70,9 @@ class ServerSpec:
     write_instructions: str = DEFAULT_WRITE_INSTRUCTIONS
     # The server package's version for <prefix>_status; defaults to the installed distribution `name`.
     version: str | None = None
+    # Product-specific examples for the spec tools' descriptions (neutral text when unset).
+    spec_search_example: str | None = None
+    spec_path_example: str | None = None
 
 
 ClientFactory = Callable[[Any], Any]
@@ -231,7 +234,12 @@ def build_server(
     for fn in register:
         fn(reg)
     if spec_sources is not None:
-        register_spec_tools(reg, product=spec.product)
+        register_spec_tools(
+            reg,
+            product=spec.product,
+            search_example=spec.spec_search_example,
+            path_example=spec.spec_path_example,
+        )
     return mcp
 
 
