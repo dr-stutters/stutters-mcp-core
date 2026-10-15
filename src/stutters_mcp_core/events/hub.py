@@ -3,6 +3,7 @@ webhook requests, and registers the generic event tools and resource."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -47,7 +48,9 @@ class EventHub:
     def __init__(self, prefix: str, settings: BaseServerSettings, buffer: EventBuffer | None = None) -> None:
         self.prefix = prefix
         self.settings = settings
-        self.buffer = buffer or EventBuffer(settings.mcp_event_buffer_size)
+        self.buffer = buffer or EventBuffer(
+            settings.mcp_event_buffer_size, max_bytes=settings.mcp_event_buffer_max_mb * 1024 * 1024
+        )
         self.sources: dict[str, EventSource] = {}
         self.listener: WebhookListener | None = None
         self.mounted_on_mcp_app = False  # set by build_server when the route is on the MCP app
@@ -86,6 +89,7 @@ class EventHub:
                     "webhook receivers are enabled but not served: set MCP_TRANSPORT=http or MCP_WEBHOOK_PORT"
                 )
         for h in hooks:
+            h.served = bool(where)
             h.listen = (
                 f"POST {where}{path}/{h.name}"
                 if where
@@ -95,8 +99,7 @@ class EventHub:
             src.start(self.buffer)
 
     async def stop(self) -> None:
-        for src in self.sources.values():
-            await src.stop()
+        await asyncio.gather(*(src.stop() for src in self.sources.values()))
         if self.listener is not None:
             await self.listener.stop()
             self.listener = None

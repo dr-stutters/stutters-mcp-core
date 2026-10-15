@@ -88,6 +88,13 @@ def test_asa_style_with_hostname_and_no_pri() -> None:
     assert m.format == "rfc3164" and m.message == "just a message without timestamp" and m.hostname is None
 
 
+def test_hostile_timestamps_never_raise() -> None:
+    m = parse_syslog("<34>1 0001-01-01T00:00:00+14:00 h a - - - x")
+    assert m.message.endswith("x")
+    m = parse_syslog("<34>Feb 29 10:00:00 h a: leap", now=datetime(2027, 1, 1, tzinfo=UTC))
+    assert m.timestamp is None and m.message == "leap"
+
+
 def test_default_event_mapping() -> None:
     m = parse_syslog("<11>1 2026-10-15T09:30:01Z sw1 app - - - link down")
     m.peer = "10.0.0.5"
@@ -261,3 +268,45 @@ async def test_bind_failure_is_retried_and_reported() -> None:
 def test_needs_a_port() -> None:
     with pytest.raises(ValueError):
         SyslogReceiver("s", udp_port=None, tcp_port=None)
+
+
+async def test_tcp_digit_leading_lines_and_junk_are_bounded() -> None:
+    rcv, buf = await start_receiver(udp_port=None, max_message=600)
+    try:
+        assert rcv.tcp_address
+        r, w = await asyncio.open_connection(*rcv.tcp_address)
+        w.write(b"2026-10-15T10:00:00 host plain line starting with a digit\n1a not octet\n")
+        await w.drain()
+        await wait_for(lambda: len(buf) == 2)
+        assert [e.summary for e in buf][1] == "1a not octet"
+        w.write(b"12" + b"3" * 2000)  # digits with no space and no newline: must not grow forever
+        await w.drain()
+        assert await closed_by_peer(r)
+        w.close()
+        r2, w2 = await asyncio.open_connection(*rcv.tcp_address)
+        w2.write(b"<34>" + b"z" * 1000 + b"\n")  # long line whose newline arrives in the same chunk
+        await w2.drain()
+        assert await closed_by_peer(r2)
+        w2.close()
+        assert rcv.drops.get("oversize") == 2 and len(buf) == 2
+    finally:
+        await rcv.stop()
+
+
+async def test_per_sender_connection_cap() -> None:
+    rcv, _ = await start_receiver(udp_port=None, max_connections_per_sender=1)
+    try:
+        assert rcv.tcp_address
+        r1, w1 = await asyncio.open_connection(*rcv.tcp_address)
+        await wait_for(lambda: rcv.status()["tcp_connections"] == 1)
+        r2, w2 = await asyncio.open_connection(*rcv.tcp_address)
+        assert await closed_by_peer(r2)
+        w2.close()
+        w1.close()
+        await wait_for(lambda: rcv.status()["tcp_connections"] == 0)
+        r3, w3 = await asyncio.open_connection(*rcv.tcp_address)
+        await wait_for(lambda: rcv.status()["tcp_connections"] == 1)
+        w3.close()
+        assert rcv.drops == {"too_many_connections": 1}
+    finally:
+        await rcv.stop()

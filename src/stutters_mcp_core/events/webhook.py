@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from stutters_mcp_core.events.limits import AllowList, TokenBucket
+from stutters_mcp_core.events.limits import AllowList, PerKeyLimiter, TokenBucket
 from stutters_mcp_core.events.model import Event
 from stutters_mcp_core.events.source import EventSource, SourceConfigError
 
@@ -48,12 +48,13 @@ MIN_SECRET_LENGTH = 16
 
 
 def parse_webhook_secrets(spec: str) -> dict[str, str]:
-    """'source:secret' entries (comma/newline separated, '#' comments) -> {source: secret}. For basic
-    auth the secret is 'username:password'. Raises ValueError without echoing secrets."""
+    """'source:secret' entries (comma/newline separated) -> {source: secret}. For basic auth the
+    secret is 'username:password'. Secrets may not contain commas; an entry starting with '#' is a
+    comment. Raises ValueError without echoing secrets."""
     out: dict[str, str] = {}
     for position, raw in enumerate(spec.replace("\n", ",").split(","), start=1):
-        entry = raw.split("#", 1)[0].strip()
-        if not entry:
+        entry = raw.strip()
+        if not entry or entry.startswith("#"):
             continue
         name, sep, secret = entry.partition(":")
         name, secret = name.strip(), secret.strip()
@@ -205,9 +206,13 @@ class WebhookReceiver(EventSource):
         self.parse = parse or default_webhook_events
         self.allow = AllowList(allow)
         self.max_body = max_body
+        # Unauthenticated traffic is limited per sender before auth, so junk from one host can't use
+        # up the source's budget; the per-source bucket is charged only for authenticated requests.
+        self.peer_limiter = PerKeyLimiter(rate_limit)
         self.bucket = TokenBucket(rate_limit) if rate_limit else None
         self.requests = 0
         self.listen = ""  # set by the hub
+        self.served = True  # set by the hub: False when no HTTP listener serves the route
         self._ready = False
 
     @classmethod
@@ -242,7 +247,10 @@ class WebhookReceiver(EventSource):
                 f"no secret configured for webhook source {self.name!r}: "
                 f"set MCP_WEBHOOK_SECRETS={self.name}:<secret>"
             )
-        if self.auth.mode != "basic" and len(self.auth.secret) < MIN_SECRET_LENGTH:
+        if not self.served:
+            raise SourceConfigError(f"webhook route not served: {self.listen}")
+        secret = self.auth.secret.partition(":")[2] if self.auth.mode == "basic" else self.auth.secret
+        if len(secret) < MIN_SECRET_LENGTH:
             raise SourceConfigError(
                 f"webhook secret for {self.name!r} is shorter than {MIN_SECRET_LENGTH} characters"
             )
@@ -263,7 +271,7 @@ class WebhookReceiver(EventSource):
         if not self.allow.allows(peer):
             self.drop("sender_not_allowed")
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        if self.bucket is not None and not self.bucket.take():
+        if not self.peer_limiter.allow(peer or ""):
             self.drop("rate_limited")
             return JSONResponse({"error": "rate limited"}, status_code=429, headers={"Retry-After": "1"})
         if not self.auth.check_headers(request.headers):
@@ -283,6 +291,9 @@ class WebhookReceiver(EventSource):
         if not self.auth.check_body(request.headers, bytes(body)):
             self.drop("auth_failed")
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if self.bucket is not None and not self.bucket.take():
+            self.drop("rate_limited")
+            return JSONResponse({"error": "rate limited"}, status_code=429, headers={"Retry-After": "1"})
         try:
             payload: Any = json.loads(body) if body.strip() else {}
         except ValueError:

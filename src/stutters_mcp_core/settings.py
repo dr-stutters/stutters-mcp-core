@@ -76,6 +76,9 @@ class BaseServerSettings(BaseSettings):
     mcp_event_buffer_size: int = Field(
         default=5000, ge=10, le=1_000_000, validation_alias=_alias("MCP_EVENT_BUFFER_SIZE")
     )
+    mcp_event_buffer_max_mb: int = Field(
+        default=64, ge=1, le=4096, validation_alias=_alias("MCP_EVENT_BUFFER_MAX_MB")
+    )
     mcp_webhooks_enabled: bool = Field(default=False, validation_alias=_alias("MCP_WEBHOOKS_ENABLED"))
     mcp_webhook_path: str = Field(default="/events", validation_alias=_alias("MCP_WEBHOOK_PATH"))
     # Unset: the routes live on the MCP HTTP app. Set: a dedicated listener (also with stdio).
@@ -180,7 +183,8 @@ class BaseServerSettings(BaseSettings):
     @model_validator(mode="after")
     def _receivers_consistent(self) -> BaseServerSettings:
         hook, mcp = self.mcp_webhook_path.rstrip("/"), "/" + self.mcp_path.strip("/")
-        if hook == "/health" or hook == mcp or hook.startswith(mcp + "/") or mcp.startswith(hook + "/"):
+        overlap = hook == "/health" or hook == mcp or hook.startswith(mcp + "/") or mcp.startswith(hook + "/")
+        if self.mcp_webhooks_enabled and overlap:
             raise ValueError("MCP_WEBHOOK_PATH must not overlap MCP_PATH or /health")
         if self.mcp_syslog_enabled and self.mcp_syslog_udp_port is None and self.mcp_syslog_tcp_port is None:
             raise ValueError("MCP_SYSLOG_ENABLED=true needs MCP_SYSLOG_UDP_PORT and/or MCP_SYSLOG_TCP_PORT")

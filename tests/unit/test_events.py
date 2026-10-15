@@ -39,6 +39,9 @@ def test_parse_time_formats() -> None:
     assert parse_time(datetime(2026, 1, 1)) == datetime(2026, 1, 1, tzinfo=UTC)
     with pytest.raises(ValueError, match="ISO 8601"):
         parse_time("yesterday-ish")
+    for huge in ("1e30", "99999999999999999999", "999999999999999d"):
+        with pytest.raises(ValueError, match="out of range"):
+            parse_time(huge)
 
 
 def test_event_normalisation_and_dict() -> None:
@@ -82,6 +85,30 @@ def test_buffer_capacity_one_and_empty_queries() -> None:
     buf.add(ev(summary="x"))
     buf.add(ev(summary="y"))
     assert [e.summary for e in buf] == ["y"]
+
+
+def test_buffer_byte_budget_and_data_truncation() -> None:
+    buf = EventBuffer(1000, max_bytes=10_000, max_event_bytes=1000)
+    big = buf.add(ev(data={"blob": "x" * 5000}, summary="s" * 3000))
+    assert big is not None and big.data["truncated"] is True and big.data["original_size"] > 5000
+    assert len(big.data["preview"]) <= 2000 and big.summary.endswith("...")
+    for _ in range(50):
+        buf.add(ev(data={"blob": "y" * 800}))
+    assert len(buf) < 51 and buf.summary()["approx_bytes"] <= 10_000
+    assert buf.stats("s1").evicted == 51 - len(buf)
+    one = EventBuffer(10, max_bytes=1)
+    one.add(ev())
+    assert len(one) == 1  # never evicts the newest event
+    buf.clear()
+    assert buf.summary()["approx_bytes"] == 0
+
+
+def test_last_error_scrubbed() -> None:
+    from stutters_mcp_core.events.source import _scrub
+
+    text = _scrub("GET https://admin:hunter2@ise/x?token=abc123&x=1 failed: password='p@ss' api_key: K")
+    assert "hunter2" not in text and "abc123" not in text and "p@ss" not in text and " K" not in text
+    assert "x=1" in text
 
 
 def test_buffer_dedupe_by_source_and_id_with_window() -> None:

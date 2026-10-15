@@ -80,13 +80,17 @@ def hook_sources(settings_auth: WebhookAuth | None = None, **kw: Any) -> Any:
 
 
 def test_webhook_settings_validation() -> None:
-    s = make_settings(mcp_webhook_secrets=f"catc:{SECRET}, gh:{SECRET} # comment", mcp_webhook_port="")
-    assert s.webhook_secrets() == {"catc": SECRET, "gh": SECRET} and s.mcp_webhook_port is None
+    s = make_settings(
+        mcp_webhook_secrets=f"catc:{SECRET},\n# comment\n gh:{SECRET}#notacomment", mcp_webhook_port=""
+    )
+    assert s.webhook_secrets() == {"catc": SECRET, "gh": SECRET + "#notacomment"}
+    assert s.mcp_webhook_port is None
     assert make_settings(mcp_webhook_path="hooks/").mcp_webhook_path == "/hooks"
+    assert make_settings(mcp_path="/events").mcp_path == "/events"  # no clash while webhooks are off
     for bad in (
-        {"mcp_webhook_path": "/mcp"},
-        {"mcp_webhook_path": "/mcp/x"},
-        {"mcp_webhook_path": "/health"},
+        {"mcp_webhook_path": "/mcp", "mcp_webhooks_enabled": True},
+        {"mcp_webhook_path": "/mcp/x", "mcp_webhooks_enabled": True},
+        {"mcp_webhook_path": "/health", "mcp_webhooks_enabled": True},
         {"mcp_webhook_path": "/a b"},
         {"mcp_webhook_secrets": "nocolon"},
         {"mcp_webhook_secrets": f"a:{SECRET},a:{SECRET}"},
@@ -205,7 +209,8 @@ async def test_webhook_hmac_and_basic_and_custom_parser() -> None:
     def make(app: Any) -> list[EventSource]:
         return [
             WebhookReceiver("gh", auth=WebhookAuth.hmac(secret=SECRET), parse=parse),
-            WebhookReceiver("basic", auth=WebhookAuth.basic("catc", "pw")),
+            WebhookReceiver("basic", auth=WebhookAuth.basic("catc", "pw-pw-pw-pw-pw-pw")),
+            WebhookReceiver("weak", auth=WebhookAuth.basic("catc", "pw")),
             WebhookReceiver("bad", auth=WebhookAuth.header(secret=SECRET), parse=lambda p, h: 1 / 0),
         ]
 
@@ -217,8 +222,9 @@ async def test_webhook_hmac_and_basic_and_custom_parser() -> None:
         assert ok.status_code == 202
         tampered = await c.post("/events/gh", content=body + b" ", headers={"X-Signature-256": sig})
         assert tampered.status_code == 401
-        r = await c.post("/events/basic", json={"name": "x"}, auth=("catc", "pw"))
+        r = await c.post("/events/basic", json={"name": "x"}, auth=("catc", "pw-pw-pw-pw-pw-pw"))
         assert r.status_code == 202
+        assert (await c.post("/events/weak", json={}, auth=("catc", "pw"))).status_code == 503
         r = await c.post("/events/basic", json={}, auth=("catc", "wrong"))
         assert r.status_code == 401 and r.headers["WWW-Authenticate"].startswith("Basic")
         r = await c.post("/events/bad", json={}, headers={"X-Webhook-Token": SECRET})
@@ -424,3 +430,13 @@ async def test_syslog_from_settings_through_server() -> None:
         assert data["results"][0]["type"] == "syslog.430002"
     disabled = SyslogReceiver.from_settings(make_settings())
     assert not disabled.enabled and "MCP_SYSLOG_ENABLED" in disabled.disabled_reason
+
+
+async def test_unauthenticated_flood_does_not_starve_the_real_sender() -> None:
+    mcp = server(hook_sources(mcp_webhook_rate_limit=1), mcp_webhooks_enabled=True)
+    async with http_client(mcp, peer="203.0.113.9") as attacker:
+        codes = [(await attacker.post("/events/catc", json={})).status_code for _ in range(5)]
+        assert codes[:2] == [401, 401] and codes[-1] == 429
+    async with http_client(mcp, peer="198.18.128.11") as product:
+        r = await product.post("/events/catc", json={"id": "x"}, headers={"X-Webhook-Token": SECRET})
+        assert r.status_code == 202

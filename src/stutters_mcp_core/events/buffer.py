@@ -3,6 +3,7 @@ consumer cursors. Events live in process memory; a restart empties it (persisten
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict, deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -73,10 +74,23 @@ class EventBuffer:
     - `read_new(consumer)` returns events added since that consumer's previous call (its cursor).
     """
 
-    def __init__(self, capacity: int = 5000, *, dedupe_window: int = 20_000) -> None:
+    def __init__(
+        self,
+        capacity: int = 5000,
+        *,
+        dedupe_window: int = 20_000,
+        max_bytes: int | None = 64 * 1024 * 1024,
+        max_event_bytes: int = 65_536,
+    ) -> None:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         self.capacity = capacity
+        # Memory bounds besides the count: the estimated total size, and one event's `data`
+        # (larger data is replaced by a truncated preview).
+        self.max_bytes = max_bytes
+        self.max_event_bytes = max_event_bytes
+        self._bytes = 0
+        self._sizes: dict[int, int] = {}
         self._events: deque[Event] = deque()
         self._seq = 0
         self._seen: OrderedDict[tuple[str, str], None] = OrderedDict()
@@ -100,9 +114,15 @@ class EventBuffer:
         self._seq += 1
         event.seq = self._seq
         event.received = event.received or utcnow()
+        size = self._limit_size(event)
         self._events.append(event)
-        while len(self._events) > self.capacity:
+        self._sizes[event.seq] = size
+        self._bytes += size
+        while len(self._events) > self.capacity or (
+            self.max_bytes is not None and self._bytes > self.max_bytes and len(self._events) > 1
+        ):
             old = self._events.popleft()
+            self._bytes -= self._sizes.pop(old.seq, 0)
             self._stats.setdefault(old.source, SourceStats()).evicted += 1
         stats.received += 1
         stats.last_seq = event.seq
@@ -111,9 +131,22 @@ class EventBuffer:
         stats.last_lag = event.lag_seconds()
         return event
 
+    def _limit_size(self, event: Event) -> int:
+        """Estimated memory cost of `event`, truncating oversized `data` first."""
+        data_size = len(json.dumps(event.data, default=str)) if event.data else 0
+        if data_size > self.max_event_bytes:
+            preview = json.dumps(event.data, default=str)[:2000]
+            event.data = {"truncated": True, "original_size": data_size, "preview": preview}
+            data_size = len(preview) + 80
+        if len(event.summary) > 2000:
+            event.summary = event.summary[:2000] + "..."
+        return 300 + data_size + len(event.summary) + sum(len(k) + len(v) for k, v in event.keys.items())
+
     def clear(self) -> None:
         """Drop every stored event (statistics and seq numbering are kept)."""
         self._events.clear()
+        self._sizes.clear()
+        self._bytes = 0
 
     # --- reading ---------------------------------------------------------------------------
 
@@ -142,6 +175,7 @@ class EventBuffer:
             "oldest_seq": oldest.seq if oldest else None,
             "oldest_event_at": oldest.when.isoformat(timespec="seconds") if oldest else None,
             "evicted": sum(s.evicted for s in self._stats.values()),
+            "approx_bytes": self._bytes,
         }
 
     def matching(

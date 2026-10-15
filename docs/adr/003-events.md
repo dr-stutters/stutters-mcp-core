@@ -41,6 +41,8 @@ source adds `source`.
 - Per-source statistics: received, duplicates, evicted, last event time, lag.
 - Filters: source, type (exact or prefix), key (`name=value` or a bare value against every key),
   severity, time window (ISO 8601 or an age like `15m`), summary text. Results come newest first.
+- Memory is bounded by count and by an estimated byte budget (`MCP_EVENT_BUFFER_MAX_MB`, default 64);
+  one event's `data` above 64 KiB is replaced by a truncated preview.
 - In memory only; a restart empties it. SQLite write-through is C6 (Next).
 
 ### Sources
@@ -99,9 +101,13 @@ default** and enabled through `from_settings(settings, ...)`.
 - The `/mcp` path keeps its bearer auth. Settings refuse a webhook path that overlaps `MCP_PATH` or
   `/health`.
 - Checks run cheapest first: known source (404), sender allow-list (403, `MCP_WEBHOOK_ALLOW_IPS`), a
-  per-source rate limit (429), header/basic auth (401), body size (413, `MCP_WEBHOOK_MAX_BODY`, checked
-  against Content-Length and while streaming), HMAC (401), JSON (400). A parser error answers 422,
-  never 500.
+  per-sender rate limit (429), header/basic auth (401), body size (413, `MCP_WEBHOOK_MAX_BODY`, checked
+  against Content-Length and while streaming), HMAC (401), then the per-source rate limit, charged only
+  for authenticated requests so unauthenticated junk can't starve the real sender (429), and JSON
+  (400). A parser error answers 422, never 500.
+- Secrets in `MCP_WEBHOOK_SECRETS` may not contain commas. Every secret, including a Basic password,
+  needs at least 16 characters.
+- Error text shown in `<prefix>_event_sources` is scrubbed of credential-looking values.
 - `X-Forwarded-For` is never trusted. Behind the relay or a proxy the peer is the tunnel end, so the
   allow-list can only name that, and the secret is the real control.
 - Replay protection (timestamped signatures) is product-specific and left to each parser.
@@ -113,8 +119,10 @@ default** and enabled through `from_settings(settings, ...)`.
   `*` timestamps) and the FTD/ASA form (year in the timestamp, `host : %FTD-6-430002:`). It extracts the
   Cisco `%FAC-SEV-MNEMONIC`. The parser never raises.
 - TCP accepts both RFC 6587 framings per message: octet counting and newline. An oversized octet count
-  closes the connection, because the stream can't be resynchronised. There is an idle timeout and a
-  connection cap (`MCP_SYSLOG_MAX_CONNECTIONS`).
+  closes the connection, because the stream can't be resynchronised. A line longer than
+  `MCP_SYSLOG_MAX_MESSAGE` closes it too, so memory per connection stays bounded. There is an idle
+  timeout (600 s), a total connection cap (`MCP_SYSLOG_MAX_CONNECTIONS`) and a cap of 8 connections per
+  sender.
 - Per-sender allow-list (`MCP_SYSLOG_ALLOW_IPS`): datagrams from other senders are dropped and TCP
   connections are closed. An empty list allows all senders and logs a warning.
 - Per-sender rate limit (`MCP_SYSLOG_RATE_LIMIT` msgs/s). UDP drops excess messages and counts them.

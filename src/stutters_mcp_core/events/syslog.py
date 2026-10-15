@@ -140,7 +140,7 @@ def _parse_5424(raw: str, pri: int, rest: str) -> SyslogMessage | None:
             timestamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             timestamp = timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp
             timestamp = timestamp.astimezone(UTC)
-        except ValueError:
+        except (ValueError, OverflowError):
             return None
     msg = msg[1:] if msg.startswith(" ") else msg
     msg = msg.removeprefix("\ufeff")
@@ -170,7 +170,10 @@ def _ts_3164(m: re.Match[str], now: datetime) -> datetime | None:
     except ValueError:
         return None
     if not m["year"] and ts > now + timedelta(days=1):  # December message read in January
-        ts = ts.replace(year=year - 1)
+        try:
+            ts = ts.replace(year=year - 1)
+        except ValueError:  # 29 February
+            return None
     return ts
 
 
@@ -274,6 +277,7 @@ class SyslogReceiver(EventSource):
         rate_limit: float | None = 500.0,
         max_message: int = 16_384,
         max_connections: int = 64,
+        max_connections_per_sender: int = 8,
         idle_timeout: float = 600.0,
         to_event: ToEvent | None = None,
         **kwargs: Any,
@@ -289,6 +293,8 @@ class SyslogReceiver(EventSource):
         self.limiter = PerKeyLimiter(rate_limit)
         self.max_message = max_message
         self.max_connections = max_connections
+        self.max_connections_per_sender = max_connections_per_sender
+        self._per_peer: dict[str, int] = {}
         self.idle_timeout = idle_timeout
         self.to_event = to_event or default_syslog_event
         self.udp_address: tuple[str, int] | None = None
@@ -328,10 +334,10 @@ class SyslogReceiver(EventSource):
 
     def handle_message(self, raw: bytes | str, peer: str, transport: str) -> Event | None:
         """Parse, convert and store one message (also usable directly in tests)."""
-        msg = parse_syslog(raw)
-        msg.peer, msg.transport = peer, transport
         self.messages += 1
         try:
+            msg = parse_syslog(raw)
+            msg.peer, msg.transport = peer, transport
             event = self.to_event(msg)
         except Exception:  # noqa: BLE001 - a bad message must not stop the listener
             log.warning("syslog to_event failed for a message from %s", peer, exc_info=True)
@@ -363,11 +369,15 @@ class SyslogReceiver(EventSource):
             self.drop("sender_not_allowed")
             writer.close()
             return
-        if self._connections >= self.max_connections:
+        if (
+            self._connections >= self.max_connections
+            or self._per_peer.get(peer, 0) >= self.max_connections_per_sender
+        ):
             self.drop("too_many_connections")
             writer.close()
             return
         self._connections += 1
+        self._per_peer[peer] = self._per_peer.get(peer, 0) + 1
         self._writers.add(writer)
         try:
             await self._read_frames(reader, peer)
@@ -375,6 +385,11 @@ class SyslogReceiver(EventSource):
             pass
         finally:
             self._connections -= 1
+            left = self._per_peer.get(peer, 1) - 1
+            if left > 0:
+                self._per_peer[peer] = left
+            else:
+                self._per_peer.pop(peer, None)
             self._writers.discard(writer)
             writer.close()
             with contextlib.suppress(Exception):
@@ -388,27 +403,27 @@ class SyslogReceiver(EventSource):
             while bytes(buf[:1]) in (b"\n", b"\r", b"\x00", b" "):
                 del buf[:1]
             frame: bytes | None = None
-            if buf[:1].isdigit():
-                space = buf.find(b" ", 0, 12)
-                if space > 0 and buf[:space].isdigit():
-                    length = int(buf[:space])
-                    if length > self.max_message:
-                        self.drop("oversize")
-                        return  # can't resynchronise an octet-counted stream; close it
-                    if len(buf) >= space + 1 + length:
-                        frame = bytes(buf[space + 1 : space + 1 + length])
-                        del buf[: space + 1 + length]
-                elif space < 0 and len(buf) > 12:
-                    self.drop("bad_framing")
-                    return
+            space = buf.find(b" ", 0, 12) if buf[:1].isdigit() else -1
+            if space > 0 and buf[:space].isdigit():
+                # RFC 6587 octet counting: "<len> <message>"
+                length = int(buf[:space])
+                if length > self.max_message:
+                    self.drop("oversize")
+                    return  # can't resynchronise an octet-counted stream; close it
+                if len(buf) >= space + 1 + length:
+                    frame = bytes(buf[space + 1 : space + 1 + length])
+                    del buf[: space + 1 + length]
+            elif buf.isdigit() and len(buf) < 12 and not eof:
+                pass  # could still become an octet count: read more
             elif buf:
+                # Newline framing (anything else, including lines that start with a digit).
                 nl = buf.find(b"\n")
+                if nl > self.max_message or (nl < 0 and len(buf) > self.max_message):
+                    self.drop("oversize")
+                    return
                 if nl >= 0:
                     frame = bytes(buf[:nl])
                     del buf[: nl + 1]
-                elif len(buf) > self.max_message:
-                    self.drop("oversize")
-                    return
                 elif eof:
                     frame = bytes(buf)
                     buf.clear()

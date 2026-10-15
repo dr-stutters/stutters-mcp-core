@@ -97,11 +97,15 @@ def parse_time(value: str | datetime | None, *, now: datetime | None = None) -> 
     now = now or utcnow()
     m = _REL_RE.match(text)
     if m:
-        return now - timedelta(seconds=float(m.group(1)) * _UNITS[m.group(2)[0].lower()])
+        try:
+            return now - timedelta(seconds=float(m.group(1)) * _UNITS[m.group(2)[0].lower()])
+        except OverflowError:
+            raise ValueError(f"Time {value!r} is out of range") from None
     try:
         return datetime.fromtimestamp(float(text), UTC)
-    except ValueError:
-        pass
+    except (ValueError, OverflowError, OSError) as e:
+        if not isinstance(e, ValueError) or text.replace(".", "", 1).isdigit():
+            raise ValueError(f"Timestamp {value!r} is out of range") from None
     try:
         return as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
     except ValueError:

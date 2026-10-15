@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import random
+import re
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -34,6 +35,18 @@ log = logging.getLogger(__name__)
 
 class SourceConfigError(Exception):
     """A configuration problem retrying won't fix; the source stops in state 'failed'."""
+
+
+_SECRETISH = re.compile(
+    r"((?:token|password|passwd|secret|api_?key|key|auth|signature|sig)[\"']?\s*[=:]\s*[\"']?)[^\s&,;\"']+",
+    re.IGNORECASE,
+)
+_URL_CREDS = re.compile(r"(\w+://)[^/\s:@]+:[^/\s@]+@")
+
+
+def _scrub(text: str) -> str:
+    """Mask credential-looking values in error text shown by <prefix>_event_sources."""
+    return _URL_CREDS.sub(r"\1***@", _SECRETISH.sub(r"\1***", text))
 
 
 def _iso(t: datetime | None) -> str | None:
@@ -134,8 +147,12 @@ class EventSource(ABC):
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, TimeoutError, Exception):
-                await asyncio.wait_for(task, timeout)
+            # asyncio.wait never raises the task's CancelledError, so a cancellation of the caller
+            # itself still propagates.
+            await asyncio.wait({task}, timeout=timeout)
+            if task.done() and not task.cancelled():
+                with contextlib.suppress(Exception):
+                    task.result()
         self.connected = False
         if self.enabled and self.state != "failed":
             self.state = "stopped"
@@ -179,7 +196,8 @@ class EventSource(ABC):
 
     def _record_error(self, e: BaseException) -> None:
         self.errors += 1
-        self.last_error = (f"{type(e).__name__}: {e}" if str(e) else type(e).__name__)[:300]
+        text = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+        self.last_error = _scrub(text)[:300]
         self.last_error_at = utcnow()
 
     def status(self) -> dict[str, Any]:
