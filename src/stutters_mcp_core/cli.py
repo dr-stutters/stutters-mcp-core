@@ -7,6 +7,7 @@ Subcommands:
     serve (default)   run over stdio, or HTTP when MCP_TRANSPORT=http / --transport http
     token <name>      generate a bearer token + the MCP_AUTH_TOKENS entry for it
     check             validate config, connect, print <prefix>_status as JSON; exit 1 on failure
+    config [--json]   show the effective configuration and where each value came from (secrets masked)
     tools [--json]    list the tools and prompts (all tiers on unless --tier); --json writes the
                       manifest other servers' prompt tests load (no appliance connection needed)
 """
@@ -152,6 +153,10 @@ def run_cli(
     tok = sub.add_parser("token", help="generate a bearer token for the HTTP transport")
     tok.add_argument("name", help="who the token is for, e.g. alice")
     sub.add_parser("check", help="connect to the appliance and print status")
+    cfg = sub.add_parser(
+        "config", help="show the effective configuration (secrets masked; no appliance needed)"
+    )
+    cfg.add_argument("--json", action="store_true", help="print JSON (includes defaults)")
     tools = sub.add_parser(
         "tools", help="list tools and prompts; --json for the manifest other servers test against"
     )
@@ -170,6 +175,19 @@ def run_cli(
         return
     if args.command == "tools":
         _tools_command(spec, settings_cls, create_server, args)
+        return
+
+    if args.command == "config":
+        try:
+            config_settings = settings_cls()  # type: ignore[call-arg]
+        except ValueError as e:
+            sys.exit(f"{prog}: invalid configuration:\n{scrub_text(str(e))}")
+        from stutters_mcp_core.config_report import config_report, render_text
+
+        report = config_report(config_settings)
+        sys.stdout.write(
+            json.dumps(report, indent=2, default=str) + "\n" if args.json else render_text(report)
+        )
         return
 
     try:
