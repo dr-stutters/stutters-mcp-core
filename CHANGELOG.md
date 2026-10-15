@@ -6,11 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-15
+
 ### Added
 - **OAuth 2.1 for HTTP (G1)** (`stutters_mcp_core.oauth`, docs/PRODUCTION.md): `MCP_OAUTH_PROVIDER=github|oidc` puts
   FastMCP's OAuth proxy in front of the server (metadata, dynamic client registration, consent, PKCE) next to the
   named bearer tokens (MultiAuth). `MCP_OAUTH_ALLOWED_USERS` is required. OAuth callers are `<provider>:<login>`
   for roles, previews, two-person and the audit log; token callers keep their name. HTTP may run OAuth-only.
+  GitHub logins come from `login` (or `id:<n>` allow-list entries); OIDC uses a verified email or
+  `MCP_OAUTH_LOGIN_CLAIM`. Client redirect URIs default to loopback. Steps to register the OAuth app are in
+  docs/PRODUCTION.md (needs the owner's GitHub account).
+
+### Adopting (server builders)
+- Bump to `tag = "v0.8.0"`; no code changes. OAuth is an operator setting on the hosted container. Don't enable
+  it on cortex until the user has registered an OAuth app (docs/PRODUCTION.md "Steps for the repo owner").
+- If a test asserts the HTTP startup error text, it now mentions `MCP_OAUTH_PROVIDER` too.
 
 ## [0.7.0] - 2026-10-15
 
