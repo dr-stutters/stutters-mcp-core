@@ -6,23 +6,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-15
+## [0.3.0] - 2026-10-15
+
+### Removed
+- The event framework and inbound receivers added in 0.2.0 (`stutters_mcp_core.events`: `EventSource`,
+  `PollingEventSource`, `EventBuffer`/`EventHub`, `SyslogReceiver`, `WebhookReceiver`, `<prefix>_list_events`,
+  `<prefix>_event_sources`, `events://` resources, `build_server(event_sources=, event_options=)` and the
+  `MCP_EVENT_*` / `MCP_SYSLOG_*` / `MCP_WEBHOOK*` settings). The servers stay **pull-only**: they read logs
+  and events from the platforms when a tool is called, and never receive pushed data. See ADR-003.
+  No released server used these APIs.
+
+### Kept from 0.2.0
+- MCP prompts (`PromptRegistrar`, `tool_ref`, `assert_prompt_contract`) and `fetch_page(max_page=...)`.
+
+## [0.2.0] - 2026-10-15 (superseded by 0.3.0; its event APIs were removed)
 
 Roadmap "Now" (C2–C5). Backwards compatible with 0.1.x: servers that pass no `event_sources` and
 register no prompts see no change, and every new setting is off by default.
 
 ### Added
-- Event framework v1 (#8, ADR-003): `stutters_mcp_core.events` with `Event`, `EventBuffer` (bounded ring buffer,
-  never-reused `seq`, per-source stats, `(source, id)` dedupe, filters by source/type prefix/key/severity/time/text,
-  `after_seq` and consumer cursors), `EventSource` (supervised task, reconnect with jittered exponential backoff,
-  status with lag/errors/drops), `PollingEventSource` (dedupe by id or content hash), `build_server(event_sources=,
-  event_options=)`, generic tools `<prefix>_list_events` / `<prefix>_event_sources` (names configurable via
-  `EventOptions`), resource `events://<prefix>/recent`, `events` brief in `<prefix>_status`.
-- Inbound receivers (#9): `WebhookReceiver` (`POST /events/<source>` on the MCP HTTP app or a dedicated
-  `MCP_WEBHOOK_PORT` listener; shared-secret header, HMAC or Basic auth; fails closed without a secret; allow-list,
-  body limit, rate limit) and `SyslogReceiver` (UDP/TCP, RFC 5424/3164 + Cisco IOS/FTD forms, octet-counted and
-  newline TCP framing, per-sender allow-list, rate limit and connection cap). `MCP_EVENT_BUFFER_SIZE`/`_MAX_MB`, `MCP_WEBHOOK*_*`, `MCP_SYSLOG_*`
-  settings, all off by default. Dockerfile/compose templates show the optional ports.
 - MCP prompts (#7): `ToolRegistrar.prompt(...)` / `PromptRegistrar` register workflow prompts `<prefix>_<workflow>` with
   `meta={"uses": [...], "tools": [...], "tier": ...}`; `tool_ref()` / `prompts.find_tool_refs()` for tool names in prompt bodies;
   `testing.prompt_contract_problems` / `assert_prompt_contract` (naming, description, argument docs, `uses`, local tool references).

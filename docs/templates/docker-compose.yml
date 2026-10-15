@@ -17,24 +17,8 @@ services:
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"
       MCP_CACHE_DIR: /cache
-      # Optional event receivers (docs/adr/003-events.md); all off by default. Inside the container
-      # they must listen on 0.0.0.0; choose the exposure with the host side of `ports` below.
-      # MCP_SYSLOG_ENABLED: "true"
-      # MCP_SYSLOG_HOST: 0.0.0.0
-      # MCP_SYSLOG_UDP_PORT: "5514"
-      # MCP_SYSLOG_TCP_PORT: "5514"
-      # MCP_SYSLOG_ALLOW_IPS: "127.0.0.1/32,172.16.0.0/12"   # tunnel end / docker gateway / senders
-      # MCP_WEBHOOKS_ENABLED: "true"            # secrets: MCP_WEBHOOK_SECRETS=<source>:<secret> in .env
-      # MCP_WEBHOOK_HOST: 0.0.0.0
-      # MCP_WEBHOOK_PORT: "8090"                # omit to serve /events/<source> on the MCP port instead
     ports:
       - "${MCP_PUBLISH_PORT:-__PORT__}:8000"
-      # Event receivers. "127.0.0.1:" on the host side keeps them local: the SSH-tunnelled CML relay
-      # (remote forwards land on cortex's loopback) still reaches them. Drop it to listen on all
-      # host addresses. The relay carries TCP only, so use syslog over TCP through it.
-      # - "127.0.0.1:${SYSLOG_PUBLISH_PORT:-5514}:5514/tcp"
-      # - "127.0.0.1:${SYSLOG_PUBLISH_PORT:-5514}:5514/udp"
-      # - "127.0.0.1:${WEBHOOK_PUBLISH_PORT:-8090}:8090"
     volumes:
       - spec-cache:/cache
     read_only: true
