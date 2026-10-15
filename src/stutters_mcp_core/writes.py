@@ -460,9 +460,7 @@ async def preview_or_apply(
     try:
         result = await apply()
     except Exception as e:
-        audit.info(
-            dumps_event("apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
-        )
+        _emit(ctx, "apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         raise
     _emit(ctx, "applied", tool, caller, plan.summary, **extra)
     out = {"status": "applied", "action": plan.summary}

@@ -239,6 +239,12 @@ class BaseServerSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _metrics_port_needs_metrics(self) -> BaseServerSettings:
+        if self.mcp_metrics_port is not None and not self.mcp_metrics:
+            log.warning("MCP_METRICS_PORT is set but MCP_METRICS is not true: no metrics are served")
+        return self
+
+    @model_validator(mode="after")
     def _policy_parses(self) -> BaseServerSettings:
         from stutters_mcp_core.policy import SafetyPolicy
 

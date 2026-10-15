@@ -19,18 +19,23 @@ Series (all prefixed `mcp_`; `server` is the server name, `product` the applianc
     mcp_rate_limit_waits_total{product}                   requests that waited for the client-side limiter
     mcp_rate_limit_wait_seconds_total{product}
 
-Label values never include ids, paths or arguments, so cardinality stays bounded by the tool list.
-Collection is a few dictionary updates per call and happens whether or not metrics are served; the
-module keeps one process-wide registry (one server per process).
+Label values never include ids, paths or arguments: tool names outside the registered tool list are
+recorded as `_unknown` and non-standard HTTP methods as `OTHER`, so cardinality is bounded. Nothing is
+recorded unless `enable()` was called (build_server does when MCP_METRICS=true), so with metrics off the
+cost is one boolean check. The module keeps one process-wide registry (one server per process).
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import math
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 TOOL_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600)
 UPSTREAM_BUCKETS = (0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60)
@@ -97,6 +102,8 @@ def _fmt_labels(labels: Labels, extra: Iterable[tuple[str, str]] = ()) -> str:
 
 
 def _fmt_value(v: float) -> str:
+    if math.isnan(v):
+        return "NaN"
     if math.isinf(v):
         return "+Inf" if v > 0 else "-Inf"
     return repr(float(v)) if not float(v).is_integer() else str(int(v))
@@ -135,11 +142,13 @@ class Registry:
 
     def value(self, name: str, **labels: str) -> float:
         """Current value of a counter/gauge series (tests)."""
-        return self._values.get(name, {}).get(tuple(sorted(labels.items())), 0.0)
+        with self._lock:
+            return self._values.get(name, {}).get(tuple(sorted(labels.items())), 0.0)
 
     def histogram_count(self, name: str, **labels: str) -> int:
-        hist = self._hists.get(name, {}).get(tuple(sorted(labels.items())))
-        return hist.count if hist else 0
+        with self._lock:
+            hist = self._hists.get(name, {}).get(tuple(sorted(labels.items())))
+            return hist.count if hist else 0
 
     def render(self) -> str:
         """The Prometheus text exposition format (version 0.0.4)."""
@@ -169,31 +178,71 @@ class Registry:
 
 REGISTRY = Registry()
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+
+_enabled = False
+_known_tool: Callable[[str], bool] | None = None
+
+
+def enable(known_tool: Callable[[str], bool] | None = None) -> None:
+    """Start recording. `known_tool(name)` says whether a tool name is registered (others -> _unknown)."""
+    global _enabled, _known_tool
+    _enabled = True
+    _known_tool = known_tool
+
+
+def disable() -> None:
+    global _enabled, _known_tool
+    _enabled, _known_tool = False, None
+
+
+def enabled() -> bool:
+    return _enabled
+
+
+def _tool_label(tool: str) -> str:
+    return tool if _known_tool is None or _known_tool(tool) else "_unknown"
+
+
+def _method_label(method: str) -> str:
+    m = method.upper()
+    return m if m in HTTP_METHODS else "OTHER"
 
 
 # --- recording helpers (called from audit, writes and the HTTP client) --------------------------
 
 
 def record_tool(server: str, tool: str, outcome: str, seconds: float) -> None:
+    if not _enabled:
+        return
+    tool = _tool_label(tool)
     REGISTRY.inc("mcp_tool_calls_total", {"server": server, "tool": tool, "outcome": outcome})
     REGISTRY.observe("mcp_tool_duration_seconds", {"server": server, "tool": tool}, seconds)
 
 
 def record_write(server: str, tool: str, event: str) -> None:
+    if not _enabled:
+        return
+    tool = _tool_label(tool)
     REGISTRY.inc("mcp_write_events_total", {"server": server, "tool": tool, "event": event})
 
 
 def record_upstream(product: str, method: str, status: str, seconds: float) -> None:
+    if not _enabled:
+        return
+    method = _method_label(method)
     REGISTRY.inc("mcp_upstream_requests_total", {"product": product, "method": method, "status": status})
     REGISTRY.observe("mcp_upstream_duration_seconds", {"product": product, "method": method}, seconds)
 
 
 def record_retry(product: str, reason: str) -> None:
+    if not _enabled:
+        return
     REGISTRY.inc("mcp_upstream_retries_total", {"product": product, "reason": reason})
 
 
 def record_rate_wait(product: str, seconds: float) -> None:
-    if seconds < RATE_WAIT_THRESHOLD:
+    if not _enabled or seconds < RATE_WAIT_THRESHOLD:
         return
     REGISTRY.inc("mcp_rate_limit_waits_total", {"product": product})
     REGISTRY.inc("mcp_rate_limit_wait_seconds_total", {"product": product}, seconds)
@@ -207,18 +256,16 @@ def set_info(server: str, version: str, core_version: str) -> None:
 
 
 class Listener:
-    def __init__(self, server: object, task: object) -> None:
+    def __init__(self, server: Any, task: asyncio.Task[None]) -> None:
         self.server = server
         self.task = task
 
     async def stop(self) -> None:
-        import asyncio
-
-        self.server.should_exit = True  # type: ignore[attr-defined]
+        self.server.should_exit = True
         try:
-            await asyncio.wait_for(self.task, timeout=5)  # type: ignore[arg-type]
-        except (TimeoutError, asyncio.CancelledError):
-            self.task.cancel()  # type: ignore[attr-defined]
+            await asyncio.wait_for(asyncio.shield(self.task), timeout=5)
+        except TimeoutError:
+            self.task.cancel()
 
 
 _listener: Listener | None = None
@@ -226,9 +273,11 @@ _listener: Listener | None = None
 
 async def start_listener(host: str, port: int) -> Listener | None:
     """Serve GET /metrics (and nothing else) on host:port, unauthenticated: bind it to loopback or a
-    monitoring network only. Started once per process; returns None if already running."""
-    import asyncio
+    monitoring network only. Never takes the MCP server down: a bind failure is logged and the server
+    runs without the listener. One listener per process (a second call returns None while it runs)."""
     import contextlib
+    import ipaddress
+    import socket
 
     import uvicorn
     from starlette.applications import Starlette
@@ -237,30 +286,51 @@ async def start_listener(host: str, port: int) -> Listener | None:
     from starlette.routing import Route
 
     global _listener
-    if _listener is not None and not _listener.task.done():  # type: ignore[attr-defined]
+    if _listener is not None and not _listener.task.done():
+        return None
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if not loopback:
+        log.warning("Metrics listener on %s:%s is unauthenticated and not on loopback", host, port)
+    try:
+        info = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)[0]
+        sock = socket.socket(info[0], socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(info[4])
+    except OSError as e:
+        log.error("Metrics listener: cannot bind %s:%s (%s); continuing without it", host, port, e)
         return None
 
     async def metrics_endpoint(request: Request) -> PlainTextResponse:
         return PlainTextResponse(REGISTRY.render(), media_type=CONTENT_TYPE)
 
     app = Starlette(routes=[Route("/metrics", metrics_endpoint, methods=["GET"])])
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, lifespan="off")
+    config = uvicorn.Config(app, log_level="warning", access_log=False, lifespan="off")
 
     class _Server(uvicorn.Server):
         def capture_signals(self) -> Any:  # the MCP server owns SIGINT/SIGTERM
             return contextlib.nullcontext()
 
     server = _Server(config)
-    task = asyncio.create_task(server.serve())
-    for _ in range(100):  # wait up to ~5 s for the bind
+
+    async def serve() -> None:
+        try:
+            await server.serve(sockets=[sock])
+        except SystemExit:  # uvicorn exits on startup failures; never let that reach the MCP server
+            log.error("Metrics listener on %s:%s stopped", host, port)
+        finally:
+            sock.close()
+
+    task = asyncio.create_task(serve())
+    for _ in range(100):  # wait up to ~5 s for startup
         if server.started or task.done():
             break
         await asyncio.sleep(0.05)
-    if task.done():
-        exc = task.exception()
-        import logging
-
-        logging.getLogger(__name__).error("metrics listener on %s:%s failed: %s", host, port, exc)
+    if not server.started:
+        log.error("Metrics listener on %s:%s did not start", host, port)
+        server.should_exit = True
         return None
     _listener = Listener(server, task)
     return _listener

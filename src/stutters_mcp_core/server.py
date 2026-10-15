@@ -165,6 +165,7 @@ def build_server(
         mcp.add_middleware(RoleMiddleware(roles, mcp))
 
     if settings.mcp_metrics:
+        metrics.enable(lambda name: name in getattr(mcp, "_stutters_tiers", {}))
         metrics.set_info(spec.name, _server_version(spec.name), __version__)
         if settings.mcp_metrics_port is None:
             _register_metrics_route(mcp, auth)
@@ -200,12 +201,9 @@ def _register_metrics_route(mcp: FastMCP[Any], auth: AuthProvider | None) -> Non
 
     @mcp.custom_route("/metrics", methods=["GET"])
     async def metrics_route(request: Request) -> Response:
-        header = request.headers.get("authorization", "")
-        scheme, _, token = header.partition(" ")
-        ok = auth is not None and scheme.lower() == "bearer" and bool(token)
-        if ok and auth is not None:
-            ok = await auth.verify_token(token.strip()) is not None
-        if not ok:
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        token = token.strip()
+        if auth is None or scheme.lower() != "bearer" or not token or await auth.verify_token(token) is None:
             return PlainTextResponse(
                 "metrics need Authorization: Bearer <one of MCP_AUTH_TOKENS>\n",
                 status_code=401,

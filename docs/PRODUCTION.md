@@ -195,6 +195,9 @@ scrape_configs:
 | `mcp_upstream_retries_total` | counter | `product`, `reason` (HTTP code, `timeout`, `error`) |
 | `mcp_rate_limit_waits_total`, `mcp_rate_limit_wait_seconds_total` | counter | `product` |
 
-Labels never carry ids, paths, arguments or callers, so cardinality is bounded by the tool list. Useful
+Labels never carry ids, paths, arguments or callers; unknown tool names are recorded as `_unknown` and
+non-standard HTTP methods as `OTHER`, so cardinality is bounded by the tool list. With `MCP_METRICS` off
+nothing is recorded. A listener port that is already in use is logged and skipped (the MCP server keeps
+running); a non-loopback `MCP_METRICS_HOST` logs a warning. Useful
 alerts: `rate(mcp_tool_calls_total{outcome="error"}[5m])`, `rate(mcp_upstream_requests_total{status=~"5..|timeout|error"}[5m])`,
 `increase(mcp_write_events_total{event="applied"}[1h])` (changes made), `rate(mcp_rate_limit_wait_seconds_total[5m])`.

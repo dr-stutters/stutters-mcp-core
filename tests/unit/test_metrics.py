@@ -22,7 +22,9 @@ TOKEN = "metrics-scraper-token-0123456789abcdef"
 @pytest.fixture(autouse=True)
 def fresh_registry() -> Any:
     REGISTRY.reset()
+    metrics.enable()
     yield
+    metrics.disable()
     REGISTRY.reset()
 
 
@@ -55,12 +57,15 @@ async def test_series_from_tool_calls(api: Any) -> None:
         await c.call_tool("demo_get_item", {"item_id": "1"})
         with pytest.raises(ToolError):
             await c.call_tool("demo_get_item", {"item_id": "2"})
+        with pytest.raises(ToolError):
+            await c.call_tool("demo_no_such_tool", {})
         prev = (await c.call_tool("demo_create_item", {"name": "x"})).structured_content
         await c.call_tool("demo_create_item", {"name": "x", "confirm": prev["confirm"]})
     s = "demo-mcp-server"
     assert REGISTRY.value("mcp_tool_calls_total", server=s, tool="demo_get_item", outcome="ok") == 1
     assert REGISTRY.value("mcp_tool_calls_total", server=s, tool="demo_get_item", outcome="error") == 1
     assert REGISTRY.histogram_count("mcp_tool_duration_seconds", server=s, tool="demo_get_item") == 2
+    assert REGISTRY.value("mcp_tool_calls_total", server=s, tool="_unknown", outcome="error") == 1
     assert REGISTRY.value("mcp_write_events_total", server=s, tool="demo_create_item", event="preview") == 1
     assert REGISTRY.value("mcp_write_events_total", server=s, tool="demo_create_item", event="applied") == 1
     assert REGISTRY.value("mcp_upstream_requests_total", product="Demo", method="GET", status="200") >= 1
@@ -138,3 +143,34 @@ async def test_separate_listener() -> None:
         await listener.stop()
         metrics._listener = None
     await asyncio.sleep(0)
+
+
+async def test_port_in_use_does_not_kill_the_server() -> None:
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        assert await metrics.start_listener("127.0.0.1", port) is None
+
+
+def test_disabled_records_nothing() -> None:
+    metrics.disable()
+    metrics.record_tool("s", "t", "ok", 0.1)
+    metrics.record_upstream("P", "GET", "200", 0.1)
+    assert REGISTRY.render() == "\n"
+
+
+def test_method_label_bounded() -> None:
+    metrics.record_upstream("P", "BREW", "418", 0.1)
+    assert REGISTRY.value("mcp_upstream_requests_total", product="P", method="OTHER", status="418") == 1
+
+
+async def test_apply_failed_counted(api: Any) -> None:
+    api.post("/api/items").mock(return_value=httpx.Response(500))
+    server = create_server(make_settings(mcp_enable_writes=True, mcp_metrics=True, retries=0))
+    async with Client(server) as c:
+        prev = (await c.call_tool("demo_create_item", {"name": "x"})).structured_content
+        with pytest.raises(ToolError):
+            await c.call_tool("demo_create_item", {"name": "x", "confirm": prev["confirm"]})
+    labels = {"server": "demo-mcp-server", "tool": "demo_create_item", "event": "apply_failed"}
+    assert REGISTRY.value("mcp_write_events_total", **labels) == 1
