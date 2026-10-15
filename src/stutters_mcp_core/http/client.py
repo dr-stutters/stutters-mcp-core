@@ -29,6 +29,7 @@ from stutters_mcp_core.errors import (
 )
 from stutters_mcp_core.http.auth import AuthStrategy, NoAuth
 from stutters_mcp_core.http.ratelimit import RateLimiter
+from stutters_mcp_core.secrets import scrub_text
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +159,9 @@ class ApiClient:
                 f"or {self.env_prefix}VERIFY_SSL=false for labs."
             )
         return Unreachable(
-            f"Could not connect to {self.product} at {self.base_url}: {text or type(e).__name__}.{hint}"
+            scrub_text(
+                f"Could not connect to {self.product} at {self.base_url}: {text or type(e).__name__}.{hint}"
+            )
         )
 
     def error_from_response(self, resp: httpx.Response) -> UpstreamError:
@@ -167,7 +170,7 @@ class ApiClient:
             body = resp.json()
         except ValueError:
             body = resp.text
-        detail = self._error_detail(body) or resp.reason_phrase or "no detail"
+        detail = scrub_text(self._error_detail(body) or resp.reason_phrase or "no detail")
         code = resp.status_code
         where = f"{resp.request.method} {resp.request.url.path}"
         if code in (401, 403):
@@ -192,7 +195,7 @@ class ApiClient:
                 f"{self.product} rate limit hit (429) on {where}. Wait a minute or narrow the query.", code
             )
         if 300 <= code < 400:
-            loc = resp.headers.get("Location", "?")
+            loc = scrub_text(resp.headers.get("Location", "?"))
             return UpstreamError(
                 f"{self.product} redirected {where} to {loc} ({code}); this API/service may be disabled.",
                 code,

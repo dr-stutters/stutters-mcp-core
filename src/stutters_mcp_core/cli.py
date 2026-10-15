@@ -26,6 +26,7 @@ from fastmcp.server.auth import AuthProvider
 
 from stutters_mcp_core.audit import configure_audit_log
 from stutters_mcp_core.inbound_auth import NamedTokenVerifier, generate_token, hash_token, valid_token_name
+from stutters_mcp_core.secrets import install_secret_filter, scrub_text
 from stutters_mcp_core.server import ServerSpec
 from stutters_mcp_core.settings import BaseServerSettings
 
@@ -52,6 +53,8 @@ def _configure_logging(settings: BaseServerSettings, package: str) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger(package).setLevel(settings.log_level.upper())
     configure_audit_log(settings.mcp_audit_log)
+    # Last line of defence: mask every configured secret value in anything that reaches a handler.
+    install_secret_filter(settings, [logging.getLogger("stutters_mcp_core.audit")])
 
 
 async def _check(spec: ServerSpec, server: FastMCP[Any]) -> int:
@@ -163,7 +166,8 @@ def run_cli(
     try:
         settings = settings_cls()  # type: ignore[call-arg]  # populated from env / .env
     except ValueError as e:  # pydantic's ValidationError, or a <VAR>_FILE problem
-        sys.exit(f"{prog}: invalid configuration (variables use the {spec.env_prefix} prefix):\n{e}")
+        problem = scrub_text(str(e))
+        sys.exit(f"{prog}: invalid configuration (variables use the {spec.env_prefix} prefix):\n{problem}")
 
     _configure_logging(settings, spec.name.replace("-", "_"))
     log = logging.getLogger(spec.name)
