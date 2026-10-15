@@ -6,7 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-15
+
 ### Added
+- **Prometheus metrics (G5)** (`stutters_mcp_core.metrics`, docs/PRODUCTION.md): `MCP_METRICS=true` serves `/metrics`
+  (bearer-protected on the MCP port, or unauthenticated on `MCP_METRICS_HOST:MCP_METRICS_PORT`, loopback by default,
+  which also works with stdio). Tool calls and durations by outcome, write events (preview/applied/blocked/refused),
+  upstream requests by status and duration, retries, rate-limiter waits, and server/core versions. No new dependency.
 - **Secrets (G4, finished).** `<VAR>_REF=<scheme>:<ref>` for every secret setting, resolved by a secret loader
   (`stutters_mcp_core.secrets.SecretLoader`: `load(ref) -> str`). Built-in `file:<path>#<key>` (JSON or KEY=VALUE);
   plug in others (Vault, 1Password; examples in docs/PRODUCTION.md) with `MCP_SECRET_LOADERS="scheme=module:Class"`.
@@ -24,6 +30,18 @@ All notable changes to this project are documented here. The format follows
   to every release and, with `image: true`, pushes the image with provenance + SBOM attestations, attaches an SPDX
   image SBOM, scans it with Trivy (`scan-severity`, `scan-fail`), and can sign it with cosign (`sign`, off until
   the key decision; both options documented).
+
+### Adopting (server builders)
+- Bump to `tag = "v0.7.0"`. ise: `test_status_all_surfaces` asserts the core version; update it.
+- Nothing else is required. Optional: switch the cortex compose file to Docker secrets
+  (`docs/templates/docker-compose.secrets.yml`), add `secrets/` to `.gitignore`, and copy the new
+  dockerignore line; call `stutters_mcp_core.secrets.register_secret(token)` after a login that returns a
+  session token/cookie you might log; set `MCP_METRICS=true` (and `MCP_METRICS_PORT` if you want a
+  loopback-only scrape port) in the hosted container.
+- CI: the reusable workflow now runs pip-audit. If it flags something you can't fix yet, pass
+  `with: { audit-ignore: "<id>" }` with a comment explaining why.
+- Snapshot/text tests: upstream error text and audit `error` now pass through the credential-shape scrubber,
+  status masks secret-named keys in your product status dict, and settings errors no longer echo input values.
 
 ### Changed
 - Upstream error messages (`detail`, redirect `Location`, connection errors), audit `error` fields and string

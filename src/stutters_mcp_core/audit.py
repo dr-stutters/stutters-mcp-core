@@ -18,6 +18,7 @@ from fastmcp.tools import ToolResult
 
 from stutters_mcp_core.formatting import MASK, is_secret_key, mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.metrics import record_tool
 from stutters_mcp_core.secrets import scrub_text
 
 audit = logging.getLogger("stutters_mcp_core.audit")
@@ -76,7 +77,9 @@ class AuditMiddleware(Middleware):
             event["outcome"] = "ok"
             return result
         finally:
-            event["duration_ms"] = int((time.monotonic() - start) * 1000)
+            elapsed = time.monotonic() - start
+            event["duration_ms"] = int(elapsed * 1000)
+            record_tool(self.server_name, event["tool"], str(event.get("outcome", "error")), elapsed)
             audit.info(json.dumps(event, default=str))
 
 

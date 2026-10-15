@@ -1419,13 +1419,14 @@ wheels = [
 
 [[package]]
 name = "stutters-mcp-core"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "tzdata" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -1443,6 +1444,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "tzdata", specifier = ">=2025.2" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]

@@ -157,6 +157,13 @@ class BaseServerSettings(BaseSettings):
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
+    # --- metrics (G5, stutters_mcp_core.metrics); off by default -------------------------
+    mcp_metrics: bool = Field(default=False, validation_alias=_alias("MCP_METRICS"))
+    mcp_metrics_port: int | None = Field(
+        default=None, ge=1, le=65535, validation_alias=_alias("MCP_METRICS_PORT")
+    )
+    mcp_metrics_host: str = Field(default="127.0.0.1", validation_alias=_alias("MCP_METRICS_HOST"))
+
     # --- safety rails (G7, stutters_mcp_core.policy); all off by default ----------------------
     mcp_dry_run: bool = Field(default=False, validation_alias=_alias("MCP_DRY_RUN"))
     mcp_change_window: str | None = Field(default=None, validation_alias=_alias("MCP_CHANGE_WINDOW"))
@@ -220,7 +227,7 @@ class BaseServerSettings(BaseSettings):
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("mcp_max_blast_radius", mode="before")
+    @field_validator("mcp_max_blast_radius", "mcp_metrics_port", mode="before")
     @classmethod
     def _blank_int_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
@@ -229,6 +236,12 @@ class BaseServerSettings(BaseSettings):
     def _dangerous_needs_writes(self) -> BaseServerSettings:
         if self.mcp_enable_dangerous and not self.mcp_enable_writes:
             raise ValueError("MCP_ENABLE_DANGEROUS=true also requires MCP_ENABLE_WRITES=true")
+        return self
+
+    @model_validator(mode="after")
+    def _metrics_port_needs_metrics(self) -> BaseServerSettings:
+        if self.mcp_metrics_port is not None and not self.mcp_metrics:
+            log.warning("MCP_METRICS_PORT is set but MCP_METRICS is not true: no metrics are served")
         return self
 
     @model_validator(mode="after")

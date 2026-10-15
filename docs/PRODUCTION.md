@@ -161,3 +161,43 @@ Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loade
   masks the configured secret values in error text.
 - Never logged: the HTTP startup log names tokens, not values; `<server> token` prints the raw token only
   to the terminal that ran it.
+
+## Metrics (core 0.7.0, roadmap G5)
+
+Prometheus text format at `/metrics`. Off by default.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_METRICS` | `false` | Serve metrics |
+| `MCP_METRICS_PORT` | unset | Serve on a separate, **unauthenticated** listener on this port (works with stdio too) |
+| `MCP_METRICS_HOST` | `127.0.0.1` | Bind address of that listener; keep it on loopback or a monitoring network |
+
+Without `MCP_METRICS_PORT`, an HTTP server serves `GET /metrics` on its MCP port and requires
+`Authorization: Bearer <token>` with any `MCP_AUTH_TOKENS` entry (give Prometheus its own, e.g.
+`prometheus:sha256:...`; with roles on, give it `ro`). Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: ise-mcp
+    metrics_path: /metrics
+    authorization: { credentials_file: /etc/prometheus/ise-mcp.token }
+    static_configs: [{ targets: ["cortex:8036"] }]
+```
+
+| Series | Type | Labels |
+|---|---|---|
+| `mcp_info` | gauge | `server`, `version`, `core_version` |
+| `mcp_tool_calls_total` | counter | `server`, `tool`, `outcome` (`ok` / `error`) |
+| `mcp_tool_duration_seconds` | histogram | `server`, `tool` |
+| `mcp_write_events_total` | counter | `server`, `tool`, `event` (`preview`, `applied`, `apply_failed`, `blocked`, `refused`) |
+| `mcp_upstream_requests_total` | counter | `product`, `method`, `status` (HTTP code, `timeout`, `error`) |
+| `mcp_upstream_duration_seconds` | histogram | `product`, `method` |
+| `mcp_upstream_retries_total` | counter | `product`, `reason` (HTTP code, `timeout`, `error`) |
+| `mcp_rate_limit_waits_total`, `mcp_rate_limit_wait_seconds_total` | counter | `product` |
+
+Labels never carry ids, paths, arguments or callers; unknown tool names are recorded as `_unknown` and
+non-standard HTTP methods as `OTHER`, so cardinality is bounded by the tool list. With `MCP_METRICS` off
+nothing is recorded. A listener port that is already in use is logged and skipped (the MCP server keeps
+running); a non-loopback `MCP_METRICS_HOST` logs a warning. Useful
+alerts: `rate(mcp_tool_calls_total{outcome="error"}[5m])`, `rate(mcp_upstream_requests_total{status=~"5..|timeout|error"}[5m])`,
+`increase(mcp_write_events_total{event="applied"}[1h])` (changes made), `rate(mcp_rate_limit_wait_seconds_total[5m])`.
