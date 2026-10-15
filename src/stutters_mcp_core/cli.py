@@ -192,6 +192,12 @@ def run_cli(
             "MCP_TWO_PERSON_TOOLS is set but only one token is configured: nobody can approve those changes. "
             "Give each person their own token (the identity is the token name)."
         )
+    roles = settings.role_map()
+    if roles is not None:
+        log.info(
+            "Per-user roles on: %s",
+            ", ".join(f"{name}={roles.role_for(name).value}" for name in sorted(tokens)),
+        )
     log.info(
         "HTTP transport on %s:%s%s; %d token(s): %s; writes %s; dangerous %s",
         settings.mcp_host,

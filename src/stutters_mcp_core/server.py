@@ -34,8 +34,10 @@ from stutters_mcp_core import __version__
 from stutters_mcp_core.audit import AuditMiddleware
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import set_max_chars
+from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
+from stutters_mcp_core.roles import RoleMiddleware
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
@@ -119,6 +121,7 @@ def build_server(
             "settings": settings,
             "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
             "policy": policy,
+            "roles": roles,
         }
         if spec_sources is not None:
             state["specs"] = SpecStore(app, spec_sources(app), cache_dir, settings.url)
@@ -133,6 +136,7 @@ def build_server(
     if settings.mcp_enable_dangerous:
         instructions += DANGEROUS_INSTRUCTIONS
     policy = settings.safety_policy()
+    roles = settings.role_map()
     if settings.mcp_enable_writes and policy.active:
         instructions += _policy_instructions(policy)
 
@@ -143,8 +147,10 @@ def build_server(
         lifespan=server_lifespan,
         mask_error_details=False,
         auth=auth,
-        middleware=[AuditMiddleware(spec.name)],
+        middleware=[AuditMiddleware(spec.name, roles)],
     )
+    if roles is not None:
+        mcp.add_middleware(RoleMiddleware(roles, mcp))
 
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
@@ -216,6 +222,9 @@ def _register_status(
             "dangerous_enabled": settings.mcp_enable_dangerous,
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
         }
+        roles = ctx.lifespan_context.get("roles")
+        if roles is not None:
+            out["server"]["access"] = roles.describe(current_caller())
         if reg.policy.active:
             out["server"]["safety"] = reg.policy.describe()
             if reg.withheld:

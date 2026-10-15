@@ -160,6 +160,13 @@ class BaseServerSettings(BaseSettings):
     )
     mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
 
+    # --- per-user roles (G2, stutters_mcp_core.roles); off unless MCP_ROLES(_FILE) is set ----
+    mcp_roles: str | None = Field(default=None, validation_alias=_alias("MCP_ROLES"))
+    mcp_roles_file: Path | None = Field(default=None, validation_alias=_alias("MCP_ROLES_FILE"))
+    mcp_default_role: Literal["ro", "rw", "admin"] = Field(
+        default="ro", validation_alias=_alias("MCP_DEFAULT_ROLE")
+    )
+
     @field_validator("url")
     @classmethod
     def _normalise_url(cls, v: str) -> str:
@@ -180,7 +187,7 @@ class BaseServerSettings(BaseSettings):
                 raw = raw[len(prefix) :].strip()
         return SecretStr(raw) if raw else None
 
-    @field_validator("mcp_cache_dir", "ca_bundle", mode="before")
+    @field_validator("mcp_cache_dir", "ca_bundle", "mcp_roles_file", mode="before")
     @classmethod
     def _empty_path_is_none(cls, v: object) -> object:
         if isinstance(v, str):
@@ -193,6 +200,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_allow_tools",
         "mcp_blast_radius_overrides",
         "mcp_two_person_tools",
+        "mcp_roles",
         mode="before",
     )
     @classmethod
@@ -215,7 +223,25 @@ class BaseServerSettings(BaseSettings):
         from stutters_mcp_core.policy import SafetyPolicy
 
         SafetyPolicy.from_settings(self)  # raises ValueError naming the bad setting
+        if self.mcp_roles is not None:
+            self.role_map()  # MCP_ROLES_FILE is read (and checked) at startup by the server
         return self
+
+    def role_map(self) -> Any:
+        """The per-user role map (stutters_mcp_core.roles.RoleMap), or None when roles are off."""
+        from stutters_mcp_core.roles import RoleMap
+
+        if self.mcp_roles is None and self.mcp_roles_file is None:
+            return None
+        spec = self.mcp_roles or ""
+        if self.mcp_roles_file is not None:
+            try:
+                spec += "\n" + self.mcp_roles_file.read_text()
+            except OSError as e:
+                raise ValueError(
+                    f"MCP_ROLES_FILE: cannot read {self.mcp_roles_file}: {e.strerror or e}"
+                ) from None
+        return RoleMap.parse(spec, self.mcp_default_role)
 
     def safety_policy(self) -> Any:
         """The parsed safety rails (stutters_mcp_core.policy.SafetyPolicy)."""

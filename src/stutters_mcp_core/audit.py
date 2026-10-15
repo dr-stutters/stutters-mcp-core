@@ -37,8 +37,9 @@ def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
 
 
 class AuditMiddleware(Middleware):
-    def __init__(self, server_name: str) -> None:
+    def __init__(self, server_name: str, roles: Any = None) -> None:
         self.server_name = server_name
+        self.roles = roles  # stutters_mcp_core.roles.RoleMap when per-user roles are on
 
     async def on_call_tool(
         self,
@@ -53,6 +54,8 @@ class AuditMiddleware(Middleware):
             "caller": current_caller(),
             "args": redact_args(context.message.arguments),
         }
+        if self.roles is not None:
+            event["role"] = self.roles.role_for(event["caller"]).value
         try:
             result = await call_next(context)
         except Exception as e:
