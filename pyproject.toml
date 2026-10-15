@@ -1,6 +1,6 @@
 [project]
 name = "stutters-mcp-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Shared FastMCP foundation for the network MCP servers"
 readme = "README.md"
 license = "MIT"
@@ -42,7 +42,7 @@ extend-exclude = ["docs"]
 select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ASYNC240", "ASYNC109", "E501"]
+"tests/**" = ["ASYNC240"]
 
 [tool.mypy]
 strict = true
