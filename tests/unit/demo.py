@@ -166,7 +166,7 @@ def register(reg: ToolRegistrar) -> None:
             tool="demo_wipe",
             args={},
             confirm=confirm,
-            plan=Plan("Delete ALL items", side_effects=["irreversible"]),
+            plan=Plan("Delete ALL items", side_effects=["irreversible"], blast_radius=3),
             apply=lambda: app.api.delete("/api/items"),
         )
 

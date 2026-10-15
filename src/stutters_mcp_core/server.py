@@ -21,23 +21,25 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
 from fastmcp.server.auth import AuthProvider
 from fastmcp.server.lifespan import lifespan
+from pydantic import Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from stutters_mcp_core import __version__
 from stutters_mcp_core.audit import AuditMiddleware
-from stutters_mcp_core.errors import UpstreamError
+from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import set_max_chars
+from stutters_mcp_core.policy import SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
-from stutters_mcp_core.writes import PreviewStore, Tier, ToolRegistrar
+from stutters_mcp_core.writes import PreviewStore, Tier, ToolRegistrar, get_previews
 
 log = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ def build_server(
             "client": app,
             "settings": settings,
             "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
+            "policy": policy,
         }
         if spec_sources is not None:
             state["specs"] = SpecStore(app, spec_sources(app), cache_dir, settings.url)
@@ -129,6 +132,9 @@ def build_server(
         instructions += spec.write_instructions
     if settings.mcp_enable_dangerous:
         instructions += DANGEROUS_INSTRUCTIONS
+    policy = settings.safety_policy()
+    if settings.mcp_enable_writes and policy.active:
+        instructions += _policy_instructions(policy)
 
     mcp: FastMCP[Any] = FastMCP(
         name=spec.name,
@@ -145,13 +151,35 @@ def build_server(
         """Liveness for Docker/load balancers. Unauthenticated, so it reveals nothing upstream."""
         return JSONResponse({"status": "ok"})
 
+    mcp._stutters_policy = policy  # type: ignore[attr-defined]
     reg = ToolRegistrar(mcp, settings, spec.prefix)
     _register_status(reg, spec, settings, status)
+    if policy.two_person and settings.mcp_enable_writes:
+        _register_review(reg, spec)
     for fn in register:
         fn(reg)
     if spec_sources is not None:
         register_spec_tools(reg, product=spec.product)
     return mcp
+
+
+def _policy_instructions(policy: SafetyPolicy) -> str:
+    lines = ["", "Safety rails are on (the preview's `policy` section shows how they apply):"]
+    if policy.dry_run:
+        lines.append("- DRY-RUN mode: previews only; no change can be confirmed.")
+    if policy.window is not None:
+        lines.append(
+            f"- Changes can only be confirmed inside the change window ({policy.window.text}); "
+            "previews work any time."
+        )
+    if policy.max_blast_radius is not None or policy.blast_overrides:
+        lines.append("- Changes touching more objects than the blast-radius limit are blocked; split them.")
+    if policy.two_person:
+        lines.append(
+            "- Some changes need two-person approval: a different user confirms the token "
+            "(they can inspect it with the review_change tool)."
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _brief(info: dict[str, Any]) -> str:
@@ -188,6 +216,10 @@ def _register_status(
             "dangerous_enabled": settings.mcp_enable_dangerous,
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
         }
+        if reg.policy.active:
+            out["server"]["safety"] = reg.policy.describe()
+            if reg.withheld:
+                out["server"]["safety"]["withheld_tools"] = sorted(reg.withheld)
         prompts = registered_prompts(reg.mcp)
         if prompts:
             out["server"]["prompts"] = sorted(prompts)
@@ -197,3 +229,36 @@ def _register_status(
             if specs.errors:
                 out["server"]["spec_errors"] = specs.errors
         return out
+
+
+def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
+    description = (
+        "Show the pending change behind a two-person confirm token (MCP_TWO_PERSON_TOOLS): what it "
+        "does, its preview, the arguments (secrets masked) and who requested it. The approver calls "
+        "this, checks the change with the user, then repeats the requester's call with confirm=<token>. "
+        "Changes nothing and does not use up the token."
+    )
+
+    @reg.read(title="Review a pending change", name=f"{spec.prefix}_review_change", description=description)
+    async def review_change(
+        ctx: Context,
+        token: Annotated[str, Field(description="The confirm token from the requester's preview (pv_...)")],
+    ) -> dict[str, Any]:
+        store = get_previews(ctx)
+        pending = store.peek(token)
+        if pending is None or not pending.two_person or pending.preview is None:
+            raise InvalidRequest(
+                "Unknown or expired two-person token. Ask the requester to preview the change again."
+            )
+        return {
+            "tool": pending.tool,
+            "requested_by": pending.caller,
+            "expires_in_seconds": store.remaining(pending),
+            **pending.preview,
+            "how_to_approve": (
+                f"If the user approves, call {pending.tool} with exactly these arguments plus "
+                f'confirm="{token}". You must be a different user than {pending.caller!r}. Masked '
+                "(secret) or truncated arguments must be supplied in full by the requester: any "
+                "difference refuses the token."
+            ),
+        }

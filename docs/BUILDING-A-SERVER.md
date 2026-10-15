@@ -81,7 +81,8 @@ class Settings(BaseServerSettings):
 You get for free: `<P>_URL, _USERNAME, _PASSWORD, _TOKEN, _VERIFY_SSL, _CA_BUNDLE, _TIMEOUT, _RETRIES,
 _RATE_LIMIT, _MAX_CONCURRENCY` plus `MCP_TRANSPORT/HOST/PORT/PATH/AUTH_TOKENS(_FILE)`,
 `MCP_ENABLE_WRITES`, `MCP_ENABLE_DANGEROUS`, `MCP_CONFIRM_TTL`, `MCP_CACHE_DIR`,
-`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`.
+`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`, and the opt-in production
+controls in [PRODUCTION.md](PRODUCTION.md) (`MCP_DRY_RUN`, `MCP_CHANGE_WINDOW`, `MCP_DENY_TOOLS`, ...).
 
 Every secret setting (any `SecretStr` field, yours too) can also come from a file: `<VAR>_FILE`, e.g.
 `ISE_PASSWORD_FILE=/run/secrets/ise_password` (Docker/Kubernetes secrets; one trailing newline is
@@ -164,6 +165,9 @@ Rules (enforced by `assert_tool_contract`):
 - Use the dangerous tier for anything disruptive: deploys, provisioning, CoA/disconnect, HA changes, deleting live policy, rebooting.
 - Accept names **or** ids wherever possible, resolving them in the tool.
 - Prefer a few task-oriented tools ("why did this auth fail") over many thin CRUD wrappers. `<prefix>_api_call` covers the rest.
+- When a write can count what it touches (devices deployed to, endpoints, rules), set
+  `Plan(blast_radius=N)`; operators can cap it (`MCP_MAX_BLAST_RADIUS`, see [PRODUCTION.md](PRODUCTION.md)).
+  Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
 - Long jobs: `poll_until(...)` with `ctx=ctx`. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
 
 ## 5a. Prompts (cross-product workflows)

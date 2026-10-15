@@ -147,6 +147,19 @@ class BaseServerSettings(BaseSettings):
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
+    # --- safety rails (G7, stutters_mcp_core.policy); all off by default ----------------------
+    mcp_dry_run: bool = Field(default=False, validation_alias=_alias("MCP_DRY_RUN"))
+    mcp_change_window: str | None = Field(default=None, validation_alias=_alias("MCP_CHANGE_WINDOW"))
+    mcp_deny_tools: str | None = Field(default=None, validation_alias=_alias("MCP_DENY_TOOLS"))
+    mcp_allow_tools: str | None = Field(default=None, validation_alias=_alias("MCP_ALLOW_TOOLS"))
+    mcp_max_blast_radius: int | None = Field(
+        default=None, ge=0, validation_alias=_alias("MCP_MAX_BLAST_RADIUS")
+    )
+    mcp_blast_radius_overrides: str | None = Field(
+        default=None, validation_alias=_alias("MCP_BLAST_RADIUS_OVERRIDES")
+    )
+    mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
+
     @field_validator("url")
     @classmethod
     def _normalise_url(cls, v: str) -> str:
@@ -174,11 +187,41 @@ class BaseServerSettings(BaseSettings):
             return Path(v.strip()).expanduser() if v.strip() else None
         return v
 
+    @field_validator(
+        "mcp_change_window",
+        "mcp_deny_tools",
+        "mcp_allow_tools",
+        "mcp_blast_radius_overrides",
+        "mcp_two_person_tools",
+        mode="before",
+    )
+    @classmethod
+    def _blank_is_none(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @field_validator("mcp_max_blast_radius", mode="before")
+    @classmethod
+    def _blank_int_is_none(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v
+
     @model_validator(mode="after")
     def _dangerous_needs_writes(self) -> BaseServerSettings:
         if self.mcp_enable_dangerous and not self.mcp_enable_writes:
             raise ValueError("MCP_ENABLE_DANGEROUS=true also requires MCP_ENABLE_WRITES=true")
         return self
+
+    @model_validator(mode="after")
+    def _policy_parses(self) -> BaseServerSettings:
+        from stutters_mcp_core.policy import SafetyPolicy
+
+        SafetyPolicy.from_settings(self)  # raises ValueError naming the bad setting
+        return self
+
+    def safety_policy(self) -> Any:
+        """The parsed safety rails (stutters_mcp_core.policy.SafetyPolicy)."""
+        from stutters_mcp_core.policy import SafetyPolicy
+
+        return SafetyPolicy.from_settings(self)
 
     @classmethod
     def settings_customise_sources(
