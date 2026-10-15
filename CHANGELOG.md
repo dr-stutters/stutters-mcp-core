@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Least-privilege kit (G3)**: `docs/least-privilege-template.md` (the per-server guide skeleton: role tables,
+  creation steps, seed script, verification) and `stutters_mcp_core.testing.least_privilege`:
+  `readonly_live_settings(Settings, "<P>_")` (logs in as `<P>RO_USERNAME`/`<P>RO_PASSWORD`, MCP role `ro`) and
+  `read_tier_report` / `assert_read_tier_works(server, samples, skip=...)`, which call every read tool as a
+  read-only identity and fail on any appliance denial or on a write tool visible to `ro`.
+
 ## [0.8.0] - 2026-10-15
 
 ### Added
