@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-15
+
+### Added
+- **Safety rails (G7)**, all opt-in (`stutters_mcp_core.policy`, operator docs in `docs/PRODUCTION.md`):
+  `MCP_DRY_RUN` (previews only, confirms refused), `MCP_CHANGE_WINDOW` (`"Mon-Fri 22:00-02:00 Australia/Sydney"`
+  or cron style `"0 22 * * 1-5 4h Australia/Sydney"`; confirms outside it are refused with the next opening),
+  `MCP_DENY_TOOLS` / `MCP_ALLOW_TOOLS` (globs and `@read`/`@write`/`@dangerous`; matching tools are not
+  registered), `MCP_MAX_BLAST_RADIUS` + `MCP_BLAST_RADIUS_OVERRIDES` (per-tool limits), and
+  `MCP_TWO_PERSON_TOOLS` (the confirm token must be redeemed by a different caller).
+- `Plan(blast_radius=N)`: how many things a change touches; shown in the preview (`blast_radius`) and checked
+  against the limits. `None` (the default) is never limited.
+- Previews carry a `policy` section when any rail is on; `<prefix>_status` reports `server.safety`
+  (including `withheld_tools`); the instructions describe the active rails.
+- `<prefix>_review_change(token)` (read tier, only when `MCP_TWO_PERSON_TOOLS` is set): the approver sees the
+  pending change, its arguments (secrets masked) and who requested it, without using up the token.
+  Applied two-person results and audit events carry `requested_by` / `approved_by`.
+- Audit events `blocked` and `refused`.
+- `testing.as_caller(name)`: run in-memory calls as a named caller (roles / two-person tests).
+- `PreviewStore.peek()`; `PreviewStore.redeem()` now returns the pending entry (was `None`).
+
+### Adopting (server builders)
+- Bump the pin to `tag = "v0.5.0"`. Nothing else is required: with no rail configured, previews, results and
+  status are unchanged (status gains `server.safety` only when a rail is on).
+- Set `Plan(..., blast_radius=N)` in write tools that can count what they touch: deploys (devices),
+  provisioning (devices), bulk endpoint/ANC changes (endpoints), template deploys (targets), lab start/stop/wipe
+  (nodes). List which tools report it in your README so operators know what `MCP_MAX_BLAST_RADIUS` covers.
+- Product rails (ISE I18, FMC F18, CatC D19/D20, CML L20) build on this: put product-specific checks in
+  `Plan.blockers` as before; use the global rails for operator policy.
+- If you snapshot previews, write tools that now set `blast_radius` gain that key.
+- Tests: `with as_caller("alice"): ...` around in-memory calls; settings kwargs `mcp_dry_run=True`,
+  `mcp_change_window=...`, `mcp_two_person_tools="@dangerous"`, etc.
+
 ## [0.4.0] - 2026-10-15
 
 ### Added

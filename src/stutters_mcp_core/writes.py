@@ -39,6 +39,7 @@ from pydantic import Field
 
 from stutters_mcp_core.errors import InvalidRequest
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.policy import SafetyPolicy
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -102,6 +103,15 @@ class ToolRegistrar:
         registry: dict[str, Tier] = getattr(mcp, "_stutters_tiers", {})
         mcp._stutters_tiers = registry  # type: ignore[attr-defined]
         self.tiers = registry
+        policy: SafetyPolicy | None = getattr(mcp, "_stutters_policy", None)
+        if policy is None:
+            policy = SafetyPolicy.from_settings(settings)
+            mcp._stutters_policy = policy  # type: ignore[attr-defined]
+        self.policy = policy
+        withheld: dict[str, Tier] = getattr(mcp, "_stutters_withheld", {})
+        mcp._stutters_withheld = withheld  # type: ignore[attr-defined]
+        self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
+        self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
 
     def _register(
         self,
@@ -119,6 +129,9 @@ class ToolRegistrar:
             if not tool_name.startswith(self.prefix + "_"):
                 raise ValueError(f"Tool {tool_name!r} must start with {self.prefix}_")
             if not tier_enabled(self.settings, tier):
+                return fn
+            if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
+                self.withheld[tool_name] = tier
                 return fn
             self.mcp.tool(
                 fn,
@@ -221,13 +234,18 @@ def _digest(value: Any) -> str:
 @dataclass
 class Plan:
     """What a write would do: a one-line summary, details for the user, anything that would make it
-    fail, and a fingerprint of the current state it depends on (re-checked at confirm time)."""
+    fail, and a fingerprint of the current state it depends on (re-checked at confirm time).
+
+    `blast_radius`: how many things the change touches (devices deployed to, endpoints affected, rules
+    rewritten...), when the tool can count them. Shown in the preview and checked against
+    MCP_MAX_BLAST_RADIUS / MCP_BLAST_RADIUS_OVERRIDES; None means "not counted" and is never limited."""
 
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
     fingerprint: Any = None
     blockers: list[str] = field(default_factory=list)
     side_effects: list[str] = field(default_factory=list)
+    blast_radius: int | None = None
 
 
 @dataclass
@@ -237,6 +255,8 @@ class _Pending:
     fingerprint: str
     caller: str
     expires: float
+    two_person: bool = False
+    preview: dict[str, Any] | None = None  # shown to the approver by <prefix>_review_change
 
 
 class PreviewStore:
@@ -249,17 +269,43 @@ class PreviewStore:
         for token in [t for t, p in self._pending.items() if p.expires < now]:
             del self._pending[token]
 
-    def issue(self, tool: str, args: dict[str, Any], fingerprint: Any, caller: str) -> str:
+    def issue(
+        self,
+        tool: str,
+        args: dict[str, Any],
+        fingerprint: Any,
+        caller: str,
+        *,
+        two_person: bool = False,
+        preview: dict[str, Any] | None = None,
+    ) -> str:
         self._purge()
         token = "pv_" + secrets.token_urlsafe(12)
         self._pending[token] = _Pending(
-            tool, _digest(args), _digest(fingerprint), caller, time.monotonic() + self.ttl
+            tool,
+            _digest(args),
+            _digest(fingerprint),
+            caller,
+            time.monotonic() + self.ttl,
+            two_person=two_person,
+            preview=preview,
         )
         return token
 
-    def redeem(self, token: str, tool: str, args: dict[str, Any], fingerprint: Any, caller: str) -> None:
+    def peek(self, token: str) -> _Pending | None:
+        """The pending change behind a token, without consuming it (None if unknown or expired)."""
+        self._purge()
+        return self._pending.get(token)
+
+    def remaining(self, pending: _Pending) -> int:
+        return max(0, int(pending.expires - time.monotonic()))
+
+    def redeem(self, token: str, tool: str, args: dict[str, Any], fingerprint: Any, caller: str) -> _Pending:
         """Consume a token or raise explaining why it can't be used. Any mismatch also burns the
-        token, so a fresh preview is always required afterwards."""
+        token, so a fresh preview is always required afterwards.
+
+        A two-person token (MCP_TWO_PERSON_TOOLS) must be redeemed by a caller other than the one who
+        previewed; the requester trying to confirm it is refused without burning the token."""
         self._purge()
         pending = self._pending.get(token)
         if pending is None:
@@ -267,8 +313,14 @@ class PreviewStore:
                 f"Unknown or expired confirm token (tokens last {int(self.ttl // 60)} minutes and work "
                 "once). Call the tool again without confirm to get a fresh preview."
             )
+        if pending.two_person and pending.caller == caller:
+            raise InvalidRequest(
+                "Confirm token refused: this change needs two-person approval (MCP_TWO_PERSON_TOOLS), so "
+                f"a different user than {caller!r} must confirm it. Nothing was changed; the token is "
+                "still valid for the approver."
+            )
         problem = None
-        if pending.caller != caller:
+        if pending.caller != caller and not pending.two_person:
             problem = "it was issued to a different user"
         elif pending.tool != tool:
             problem = f"it was issued for {pending.tool}"
@@ -279,11 +331,29 @@ class PreviewStore:
         del self._pending[token]
         if problem:
             raise InvalidRequest(f"Confirm token refused: {problem}. Nothing was changed; preview again.")
+        return pending
 
 
 def get_previews(ctx: Context) -> PreviewStore:
     store: PreviewStore = ctx.lifespan_context["previews"]
     return store
+
+
+def _policy_for(ctx: Context) -> SafetyPolicy | None:
+    lc = ctx.lifespan_context
+    policy = lc.get("policy")
+    if policy is None and "settings" in lc:
+        policy = lc["settings"].safety_policy()
+    return policy if isinstance(policy, SafetyPolicy) else None
+
+
+def _tier_of(ctx: Context, tool: str) -> str | None:
+    try:
+        tiers: dict[str, Tier] = getattr(ctx.fastmcp, "_stutters_tiers", {})
+    except Exception:  # noqa: BLE001 - no server attached (unit tests of the helper)
+        return None
+    tier = tiers.get(tool)
+    return tier.value if tier is not None else None
 
 
 async def preview_or_apply(
@@ -296,42 +366,121 @@ async def preview_or_apply(
     apply: Callable[[], Awaitable[Any]],
 ) -> dict[str, Any]:
     """Return a preview (issuing a token) when `confirm` is None; otherwise check the token against
-    the freshly computed plan and apply. `args` must be every argument except `confirm`."""
+    the freshly computed plan and apply. `args` must be every argument except `confirm`.
+
+    The safety rails (stutters_mcp_core.policy) are applied here: dry-run and change-window refusals,
+    blast-radius limits and two-person confirmation. With no rails configured the output is unchanged."""
     store = get_previews(ctx)
     caller = current_caller()
+    policy = _policy_for(ctx)
+    tier = _tier_of(ctx, tool)
+    info: dict[str, Any] = {}
+    blockers = list(plan.blockers)
+    refusals: list[str] = []
+    two_person = False
+    if policy is not None and policy.active:
+        info, policy_blockers, refusals = policy.for_write(tool, tier, plan.blast_radius)
+        blockers += policy_blockers
+        two_person = bool(info.get("two_person"))
+    extra: dict[str, Any] = {}
+    if info:
+        extra["policy"] = info
+    elif plan.blast_radius is not None:
+        extra["blast_radius"] = plan.blast_radius
+    identity = caller_identity(ctx, caller)
+    if identity is not None:
+        extra["role"] = identity["role"]
+
     if confirm is None:
         out: dict[str, Any] = {"status": "preview", "action": plan.summary}
         if plan.details:
             out["preview"] = plan.details
         if plan.side_effects:
             out["side_effects"] = plan.side_effects
-        if plan.blockers:
+        if plan.blast_radius is not None:
+            out["blast_radius"] = plan.blast_radius
+        if info:
+            out["policy"] = info
+        if identity is not None:
+            out["requested_by"] = identity
+        if blockers:
             out["status"] = "blocked"
-            out["blockers"] = plan.blockers
+            out["blockers"] = blockers
             out["note"] = "This change can't be applied as it stands; nothing was changed."
+            audit.info(dumps_event("blocked", tool, caller, plan.summary, blockers=blockers, **extra))
             return out
-        token = store.issue(tool, args, plan.fingerprint, caller)
+        if policy is not None and policy.dry_run:
+            out["note"] = (
+                "Dry-run mode (MCP_DRY_RUN=true): this preview is all the server will do. Nothing was "
+                "changed and no confirm token is issued."
+            )
+            audit.info(dumps_event("preview", tool, caller, plan.summary, **extra))
+            return out
+        token = store.issue(tool, args, plan.fingerprint, caller, two_person=two_person)
         out["confirm"] = token
         out["expires_in_seconds"] = int(store.ttl)
-        out["how_to_apply"] = (
-            "Nothing has been changed. Show this preview to the user; if they approve, call "
-            f'{tool} again with exactly the same arguments plus confirm="{token}".'
-        )
-        audit.info(dumps_event("preview", tool, caller, plan.summary))
+        if two_person:
+            out["how_to_apply"] = (
+                "Nothing has been changed. This change needs TWO-PERSON approval: a different user must "
+                f"review it (`{tool.split('_', 1)[0]}_review_change` with this token shows the preview) and "
+                f'then call {tool} with exactly the same arguments plus confirm="{token}". '
+                "The requester can't confirm it."
+            )
+        else:
+            out["how_to_apply"] = (
+                "Nothing has been changed. Show this preview to the user; if they approve, call "
+                f'{tool} again with exactly the same arguments plus confirm="{token}".'
+            )
+        if refusals:
+            out["warning"] = "The confirm will be refused while " + "; ".join(refusals) + "."
+        pending = store.peek(token)
+        if pending is not None and two_person:
+            pending.preview = {
+                k: v for k, v in out.items() if k not in ("confirm", "how_to_apply", "expires_in_seconds")
+            }
+            pending.preview["args"] = _shown_args(args)
+        audit.info(dumps_event("preview", tool, caller, plan.summary, **extra))
         return out
-    if plan.blockers:
-        raise InvalidRequest(f"Can't apply: {'; '.join(plan.blockers)}. Nothing was changed.")
-    store.redeem(confirm, tool, args, plan.fingerprint, caller)
+
+    if refusals:
+        audit.info(dumps_event("refused", tool, caller, plan.summary, reasons=refusals, **extra))
+        raise InvalidRequest(f"Can't apply: {'; '.join(refusals)}. Nothing was changed.")
+    if blockers:
+        audit.info(dumps_event("refused", tool, caller, plan.summary, reasons=blockers, **extra))
+        raise InvalidRequest(f"Can't apply: {'; '.join(blockers)}. Nothing was changed.")
+    pending = store.redeem(confirm, tool, args, plan.fingerprint, caller)
+    if pending.two_person:
+        extra["requested_by"] = pending.caller
+        extra["approved_by"] = caller
     try:
         result = await apply()
     except Exception as e:
-        audit.info(dumps_event("apply_failed", tool, caller, plan.summary, error=str(e)[:300]))
+        audit.info(dumps_event("apply_failed", tool, caller, plan.summary, error=str(e)[:300], **extra))
         raise
-    audit.info(dumps_event("applied", tool, caller, plan.summary))
+    audit.info(dumps_event("applied", tool, caller, plan.summary, **extra))
     out = {"status": "applied", "action": plan.summary}
+    if pending.two_person:
+        out["requested_by"] = pending.caller
+        out["approved_by"] = caller
     if result is not None:
         out["result"] = result
     return out
+
+
+def _shown_args(args: dict[str, Any]) -> dict[str, Any]:
+    from stutters_mcp_core.audit import redact_args
+
+    return redact_args(args)
+
+
+def caller_identity(ctx: Context | None, caller: str) -> dict[str, Any] | None:
+    """{"caller": name, "role": role} when per-user roles are configured (G2), else None."""
+    if ctx is None:
+        return None
+    roles = ctx.lifespan_context.get("roles") if hasattr(ctx, "lifespan_context") else None
+    if roles is None:
+        return None
+    return {"caller": caller, "role": roles.role_for(caller).value}
 
 
 def dumps_event(event: str, tool: str, caller: str, summary: str, **extra: Any) -> str:
