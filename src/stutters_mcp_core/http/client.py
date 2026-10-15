@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 import httpx
 
-from stutters_mcp_core import __version__
+from stutters_mcp_core import __version__, metrics
 from stutters_mcp_core.errors import (
     AuthError,
     Conflict,
@@ -143,12 +143,28 @@ class ApiClient:
         """One request with no auth, retries or error mapping (used by login flows). Connection
         problems still become Unreachable/UpstreamTimeout."""
         try:
-            async with self.limiter.slot():
-                return await self._http.request(method.upper(), self._url(path), **kwargs)
+            return await self._send(method.upper(), path, **kwargs)
         except httpx.TimeoutException as e:
             raise UpstreamTimeout(f"{self.product} request timed out: {method.upper()} {path}") from e
         except httpx.TransportError as e:
             raise self._unreachable(e) from e
+
+    async def _send(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """One HTTP exchange through the rate limiter, recording metrics (G5)."""
+        waited = time.monotonic()
+        async with self.limiter.slot():
+            started = time.monotonic()
+            metrics.record_rate_wait(self.product, started - waited)
+            try:
+                resp = await self._http.request(method, self._url(path), **kwargs)
+            except httpx.TimeoutException:
+                metrics.record_upstream(self.product, method, "timeout", time.monotonic() - started)
+                raise
+            except httpx.TransportError:
+                metrics.record_upstream(self.product, method, "error", time.monotonic() - started)
+                raise
+            metrics.record_upstream(self.product, method, str(resp.status_code), time.monotonic() - started)
+            return resp
 
     def _unreachable(self, e: Exception) -> Unreachable:
         text = str(e)
@@ -231,19 +247,21 @@ class ApiClient:
         while True:
             auth_headers = await self.auth.headers(self)
             try:
-                async with self.limiter.slot():
-                    resp = await self._http.request(
-                        method,
-                        self._url(path),
-                        params=params,
-                        json=json,
-                        content=content,
-                        headers={**auth_headers, **(headers or {})},
-                        timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
-                    )
+                resp = await self._send(
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    content=content,
+                    headers={**auth_headers, **(headers or {})},
+                    timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
+                )
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 if retry_5xx and attempt < self.retries:
                     attempt += 1
+                    metrics.record_retry(
+                        self.product, "timeout" if isinstance(e, httpx.TimeoutException) else "error"
+                    )
                     await asyncio.sleep(_backoff(attempt))
                     continue
                 if isinstance(e, httpx.TimeoutException):
@@ -261,6 +279,7 @@ class ApiClient:
                 code in RETRY_ANY_METHOD or (retry_5xx and code in RETRY_IDEMPOTENT)
             ):
                 attempt += 1
+                metrics.record_retry(self.product, str(code))
                 delay = _retry_after(resp)
                 log.warning("%s %s on %s %s; retry %d", self.product, code, method, path, attempt)
                 await asyncio.sleep(delay if delay is not None else _backoff(attempt))

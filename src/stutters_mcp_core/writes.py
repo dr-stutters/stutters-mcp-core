@@ -411,14 +411,14 @@ async def preview_or_apply(
             out["status"] = "blocked"
             out["blockers"] = blockers
             out["note"] = "This change can't be applied as it stands; nothing was changed."
-            audit.info(dumps_event("blocked", tool, caller, plan.summary, blockers=blockers, **extra))
+            _emit(ctx, "blocked", tool, caller, plan.summary, blockers=blockers, **extra)
             return out
         if policy is not None and policy.dry_run:
             out["note"] = (
                 "Dry-run mode (MCP_DRY_RUN=true): this preview is all the server will do. Nothing was "
                 "changed and no confirm token is issued."
             )
-            audit.info(dumps_event("preview", tool, caller, plan.summary, **extra))
+            _emit(ctx, "preview", tool, caller, plan.summary, **extra)
             return out
         token = store.issue(tool, args, plan.fingerprint, caller, two_person=two_person)
         out["confirm"] = token
@@ -444,14 +444,14 @@ async def preview_or_apply(
             }
             pending.preview = mask_secrets(pending.preview)
             pending.preview["args"] = _shown_args(args)
-        audit.info(dumps_event("preview", tool, caller, plan.summary, **extra))
+        _emit(ctx, "preview", tool, caller, plan.summary, **extra)
         return out
 
     if refusals:
-        audit.info(dumps_event("refused", tool, caller, plan.summary, reasons=refusals, **extra))
+        _emit(ctx, "refused", tool, caller, plan.summary, reasons=refusals, **extra)
         raise InvalidRequest(f"Can't apply: {'; '.join(refusals)}. Nothing was changed.")
     if blockers:
-        audit.info(dumps_event("refused", tool, caller, plan.summary, reasons=blockers, **extra))
+        _emit(ctx, "refused", tool, caller, plan.summary, reasons=blockers, **extra)
         raise InvalidRequest(f"Can't apply: {'; '.join(blockers)}. Nothing was changed.")
     pending = store.redeem(confirm, tool, args, plan.fingerprint, caller)
     if pending.two_person:
@@ -464,7 +464,7 @@ async def preview_or_apply(
             dumps_event("apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         )
         raise
-    audit.info(dumps_event("applied", tool, caller, plan.summary, **extra))
+    _emit(ctx, "applied", tool, caller, plan.summary, **extra)
     out = {"status": "applied", "action": plan.summary}
     if pending.two_person:
         out["requested_by"] = pending.caller
@@ -472,6 +472,18 @@ async def preview_or_apply(
     if result is not None:
         out["result"] = result
     return out
+
+
+def _emit(ctx: Context, event: str, tool: str, caller: str, summary: str, **extra: Any) -> None:
+    """One audit event for a write, plus the mcp_write_events_total metric."""
+    from stutters_mcp_core.metrics import record_write
+
+    audit.info(dumps_event(event, tool, caller, summary, **extra))
+    try:
+        server = str(ctx.fastmcp.name)
+    except Exception:  # noqa: BLE001 - no server attached (unit tests of the helper)
+        server = ""
+    record_write(server, tool, event)
 
 
 def _shown_args(args: dict[str, Any]) -> dict[str, Any]:
