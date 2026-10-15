@@ -19,7 +19,6 @@ All notable changes to this project are documented here. The format follows
   input values.
 - `SecretErrorMiddleware` (installed by `build_server`): tool errors returned to the client are scrubbed the same way.
 - `secrets.register_secret(value)`: mask a value obtained at runtime (session token, cookie) in later logs.
-
 - **Security scanning in the reusable workflows (G8)** (docs/SUPPLY-CHAIN.md): `python-ci.yml` runs pip-audit on the
   locked runtime dependencies (`audit`, `audit-ignore` inputs); `python-release.yml` attaches a CycloneDX Python SBOM
   to every release and, with `image: true`, pushes the image with provenance + SBOM attestations, attaches an SPDX
