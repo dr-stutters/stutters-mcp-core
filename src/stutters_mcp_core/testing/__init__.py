@@ -29,12 +29,13 @@ a server's runtime code (it isn't, normally).
 
 from __future__ import annotations
 
+import contextlib
 import difflib
 import json
 import os
 import re
 import socket
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -52,6 +53,7 @@ from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, 
 from stutters_mcp_core.settings import BaseServerSettings
 
 __all__ = [
+    "as_caller",
     "SNAPSHOT_UPDATE_ENV",
     "ToolManifest",
     "assert_inbound_references",
@@ -388,3 +390,16 @@ def live_settings[S: BaseServerSettings](settings_cls: type[S], env_prefix: str,
     if not reachable(settings.url):
         pytest.skip(f"{settings.url} is unreachable (lab down or VPN off)")
     return settings
+
+
+@contextlib.contextmanager
+def as_caller(name: str) -> Iterator[None]:
+    """Make `current_caller()` return `name` inside the block (in-memory tests of roles and
+    two-person confirms, where there is no HTTP bearer token)."""
+    from stutters_mcp_core.inbound_auth import _caller_override
+
+    _caller_override.append(name)
+    try:
+        yield
+    finally:
+        _caller_override.pop()

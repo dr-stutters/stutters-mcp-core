@@ -111,6 +111,7 @@ Shared (unprefixed, because each server runs in its own process or container):
 | `MCP_CACHE_DIR` | `~/.cache/<server>` | empty string disables |
 | `MCP_AUDIT_LOG` | `stderr` | `stderr` \| file path \| `off` |
 | `LOG_LEVEL` | `INFO` | |
+| `MCP_DRY_RUN`, `MCP_CHANGE_WINDOW`, `MCP_DENY_TOOLS`, `MCP_ALLOW_TOOLS`, `MCP_MAX_BLAST_RADIUS`, `MCP_BLAST_RADIUS_OVERRIDES`, `MCP_TWO_PERSON_TOOLS` | off | Safety rails (core 0.5.0); see [PRODUCTION.md](PRODUCTION.md) |
 
 Per-product (prefixed, e.g. `ISE_`), defined once in core as a mixin so every product has the same knobs:
 `<P>_URL`, `<P>_USERNAME`, `<P>_PASSWORD` (or `<P>_TOKEN`), `<P>_VERIFY_SSL` (**default true**),
