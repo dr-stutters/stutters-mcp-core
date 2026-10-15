@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15: event ingestion scrapped (ADR-003, core v0.3.0); servers are pull-only. Current releases: core v0.2.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
+_Last updated 2026-10-15: core v0.4.0 (prompt test kit); event ingestion scrapped (ADR-003, core v0.3.0); servers are pull-only. Current releases: core v0.4.0, cml-mcp-server v0.3.0, fmc / catc / ise-mcp-server v0.2.0._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -37,8 +37,8 @@ Sizes: **S** ≤ 1 day of agent work · **M** 1–3 days · **L** > 3 days or ne
 ### Next
 | # | Item | Why | External needs | Size |
 |---|---|---|---|---|
-| [C8](https://github.com/dr-stutters/stutters-mcp-core/issues/13) | **XML helper in core** (if a second server needs it; ISE keeps `xmlutil.py` until then) | Avoid duplicates | none | S |
-| [C9](https://github.com/dr-stutters/stutters-mcp-core/issues/14) | **Prompt test kit**: render every prompt, check its referenced tools exist on the target servers (by name/prefix), snapshot tests | Prompts rot silently otherwise | none | S |
+| ❌ [C8](https://github.com/dr-stutters/stutters-mcp-core/issues/13) | ~~XML helper in core~~: not planned (2026-10-15). Only ISE parses XML (MnT); CML, FMC and CatC are JSON-only. ISE keeps `xmlutil.py` | Avoid duplicates | none | S |
+| ✅ [C9](https://github.com/dr-stutters/stutters-mcp-core/issues/14) | **Prompt test kit** (✅ v0.4.0): `<server> tools --json` manifests, cross-server reference checks both ways, prompt snapshots | Prompts rot silently otherwise | none | S |
 
 ### Later
 _C6, C7, C10, C11 (event persistence, correlation, notifications, fan-out) were dropped with ADR-003._
@@ -75,7 +75,7 @@ Labs and PoCs may use the servers before then.
 | [G1](https://github.com/dr-stutters/stutters-mcp-core/issues/18) | **OAuth 2.1 for HTTP** (FastMCP auth; GitHub or customer IdP), keeping named bearer tokens for automation | An IdP app registration; public HTTPS if used with Claude Desktop connectors | M |
 | [G2](https://github.com/dr-stutters/stutters-mcp-core/issues/19) | **Per-user roles** (`ro` / `rw` / `admin`) mapped to tiers; the identity shows in previews and the audit log | — | M |
 | [G3](https://github.com/dr-stutters/stutters-mcp-core/issues/20) | **Least-privilege account guides** per product, tested: ISE custom admin roles (ERS operator, MnT), FMC custom user role, CatC custom role (RBAC), CML non-admin | Customer creates the accounts | M |
-| [G4](https://github.com/dr-stutters/stutters-mcp-core/issues/21) | **Secrets**: `*_PASSWORD_FILE` / Docker secrets everywhere; no secrets in env dumps; optional Vault/1Password loader | A secret store (optional) | S |
+| [G4](https://github.com/dr-stutters/stutters-mcp-core/issues/21) | **Secrets**: `*_PASSWORD_FILE` / Docker secrets everywhere (✅ core `<VAR>_FILE` for every secret setting, v0.4.0; servers' compose files still to adopt); no secrets in env dumps; optional Vault/1Password loader | A secret store (optional) | S |
 | [G5](https://github.com/dr-stutters/stutters-mcp-core/issues/22) | **Observability**: structured logs, `/metrics` (Prometheus: calls, errors, latency, upstream status, rate-limit waits), request ids end to end | A Prometheus scraper (optional) | S |
 | [G6](https://github.com/dr-stutters/stutters-mcp-core/issues/23) | **Support matrix + compatibility tests**: at least two versions per product (e.g. ISE 3.3/3.4/3.5, FMC 7.4/7.6/10.0, CatC 2.3.7/3.1, CML 2.8–2.10) | Labs on each version (lab/CML/customer) | L |
 | [G7](https://github.com/dr-stutters/stutters-mcp-core/issues/24) | **Safety rails for production**: dry-run-only mode, change-window guard (`MCP_CHANGE_WINDOW`), per-tool deny-list, max blast radius (devices per deploy), two-person confirm (optional) | — | M |

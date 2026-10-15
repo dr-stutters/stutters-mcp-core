@@ -16,8 +16,9 @@ Shared [FastMCP](https://gofastmcp.com) foundation for a family of network-platf
 
 Settings, transports (stdio / Streamable HTTP), inbound bearer-token auth, an upstream HTTP client
 (login/refresh auth strategies, retries, rate limiting, pagination), error mapping, output formatting,
-preview-first write guard, async task poller, OpenAPI spec search tools, audit logging, and a pytest
-plugin with a tool-contract linter. Product-specific code lives in each server repo.
+preview-first write guard, async task poller, OpenAPI spec search tools, audit logging, MCP prompts, and
+test helpers: tool and prompt contract linters plus the prompt test kit (manifests exported with
+`<server> tools --json`, cross-server reference checks, prompt snapshots). Product-specific code lives in each server repo.
 
 ## Using it from a server
 
