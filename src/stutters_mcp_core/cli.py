@@ -34,7 +34,7 @@ CreateServer = Callable[..., FastMCP[Any]]
 
 def _token_command(prog: str, name: str) -> None:
     if not valid_token_name(name):
-        sys.exit(f"{prog}: token name may only contain letters, digits and _ . @ -")
+        sys.exit(f"{prog}: token name may only contain letters, digits and _ . @ - ('local' is reserved)")
     token = generate_token()
     print(f"Bearer token for {name!r} (give this to the user; it is not stored anywhere):\n")
     print(f"  {token}\n")
@@ -191,6 +191,12 @@ def run_cli(
         log.warning(
             "MCP_TWO_PERSON_TOOLS is set but only one token is configured: nobody can approve those changes. "
             "Give each person their own token (the identity is the token name)."
+        )
+    roles = settings.role_map()
+    if roles is not None:
+        log.info(
+            "Per-user roles on: %s",
+            ", ".join(f"{name}={roles.role_for(name).value}" for name in sorted(tokens)),
         )
     log.info(
         "HTTP transport on %s:%s%s; %d token(s): %s; writes %s; dangerous %s",

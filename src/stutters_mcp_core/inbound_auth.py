@@ -45,8 +45,10 @@ def parse_tokens(spec: str) -> dict[str, str]:
         if not sep or not name or not value:
             # Never echo the entry: it may be a bare token.
             raise ValueError(f"Token entry #{position} must look like 'name:token' or 'name:sha256:<hex>'")
-        if not _NAME_RE.match(name):
-            raise ValueError(f"Token name {name!r} may only contain letters, digits and _ . @ -")
+        if not valid_token_name(name):
+            raise ValueError(
+                f"Token name {name!r} may only contain letters, digits and _ . @ - (and 'local' is reserved)"
+            )
         if name in entries:
             raise ValueError(f"Duplicate token name {name!r}")
         if value.startswith("sha256:"):
@@ -104,5 +106,8 @@ def current_caller() -> str:
     return _caller_override[-1] if _caller_override else "local"
 
 
+RESERVED_NAMES = frozenset({"local"})  # the stdio caller's identity; a token must never claim it
+
+
 def valid_token_name(name: str) -> bool:
-    return bool(_NAME_RE.match(name))
+    return bool(_NAME_RE.match(name)) and name.lower() not in RESERVED_NAMES

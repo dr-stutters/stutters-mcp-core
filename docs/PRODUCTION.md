@@ -53,3 +53,36 @@ If a tool's tier is unknown, tier selectors such as `@dangerous` count as matchi
 Audit events added: `blocked` (a preview with blockers, including a product tool's own `Plan.blockers`),
 `refused` (a confirm refused by a rail or blocker);
 `preview` / `applied` / `apply_failed` carry the `policy` section when rails are on.
+
+## Per-user roles (core 0.6.0, roadmap G2)
+
+Map caller identities to roles; each role unlocks tool tiers. Off unless `MCP_ROLES` or `MCP_ROLES_FILE` is set.
+
+| Variable | Example | Effect |
+|---|---|---|
+| `MCP_ROLES` | `alice:admin, bob:rw, ci-*:ro, github:octocat:rw` | `name:role` entries; names are exact or shell globs |
+| `MCP_ROLES_FILE` | `/run/secrets/mcp_roles` | Same format, one entry per line, `#` comments; added to `MCP_ROLES` |
+| `MCP_DEFAULT_ROLE` | `ro` (default) | Role for callers no entry matches |
+
+| Role | Tools |
+|---|---|
+| `ro` | read |
+| `rw` | read, write |
+| `admin` | read, write, dangerous |
+
+- The identity is the bearer-token name from `MCP_AUTH_TOKENS` (or `<provider>:<login>` with OAuth). An
+  exact name wins; then the most specific matching glob (most literal characters; on a tie the lower role),
+  so `*:ro, ops-*:admin` gives `ops-amy` admin and everyone else ro; then `MCP_DEFAULT_ROLE`.
+- The stdio caller (`local`) is `admin` unless an entry names it: it is the operator's own process. `local`
+  is a reserved name no bearer token can use.
+- Roles only narrow: the server's `MCP_ENABLE_WRITES` / `MCP_ENABLE_DANGEROUS` still decide what exists.
+- Tools above a caller's role are hidden from their tool list and refused if called (audit event `denied`).
+  Prompts follow their declared tier. A tool or prompt registered outside the core registrars (no known
+  tier) needs `admin`.
+- `<prefix>_api_call` is one dangerous-tier tool (it can send any method), so with writes on it is `admin`
+  only; `ro` and `rw` callers use the curated tools and `<prefix>_search_spec` / `<prefix>_get_definition`.
+- Identity and role are shown in previews (`requested_by: {caller, role}`), in `<prefix>_status`
+  (`server.access`: your identity and role, the default role, the number of entries) and in every audit
+  event (`role`). At HTTP startup the log lists each token name with its role.
+- `<prefix>_review_change` (two-person review) needs `rw` or `admin`, like the change it reviews.
+- Combine with two-person confirm: e.g. `MCP_TWO_PERSON_TOOLS=@dangerous` with two `admin` users.

@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-15
+
+### Added
+- **Per-user roles (G2)** (`stutters_mcp_core.roles`): `MCP_ROLES` / `MCP_ROLES_FILE` map caller identities
+  (token names or `<provider>:<login>`, exact or glob) to `ro` / `rw` / `admin`; `MCP_DEFAULT_ROLE` (default
+  `ro`) covers the rest. Tools above the caller's role are hidden and refused (audit event `denied`); prompts
+  follow their tier. Previews show `requested_by: {caller, role}`, status shows `server.access`, and every
+  audit event carries `role`. Off by default; the stdio caller `local` is `admin` unless named.
+- `<prefix>_review_change` needs `rw` or `admin` when roles are on. The HTTP startup log lists each token's role.
+
+### Changed
+- `local` is a reserved token name (it is the stdio caller's identity): `MCP_AUTH_TOKENS` and `<server> token`
+  refuse it.
+
+### Adopting (server builders)
+- Bump the pin to `tag = "v0.6.0"`. No code changes needed: roles are an operator setting and gate tiers
+  through `ToolRegistrar`'s tier registry. Tools you register with `mcp.tool(...)` directly (bypassing
+  `reg.read/write/dangerous`) have no tier and become admin-only when roles are on: register everything
+  through the registrar.
+- Prompts: declare `tier=Tier.WRITE` (or DANGEROUS) on prompts that need write tools, so `ro` callers don't see them.
+- Tests: `with as_caller("bob"): ...` with `make_settings(mcp_roles="bob:rw")`; check your read tier with a `ro` caller.
+- README: add `MCP_ROLES` to the env table (link core `docs/PRODUCTION.md`).
+
 ## [0.5.0] - 2026-10-15
 
 ### Added
