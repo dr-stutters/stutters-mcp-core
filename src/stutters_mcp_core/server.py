@@ -68,12 +68,25 @@ class ServerSpec:
     env_prefix: str  # e.g. "ISE_"
     instructions: str
     write_instructions: str = DEFAULT_WRITE_INSTRUCTIONS
+    # The server package's version for <prefix>_status; defaults to the installed distribution `name`.
+    version: str | None = None
 
 
 ClientFactory = Callable[[Any], Any]
 Registrar = Callable[[ToolRegistrar], None]
 StatusFn = Callable[[Any], Awaitable[dict[str, Any]]]
 SpecSources = Callable[[Any], list[SpecSource]]
+
+
+def _server_version(spec: ServerSpec) -> str | None:
+    if spec.version:
+        return spec.version
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version(spec.name)
+    except PackageNotFoundError:
+        return None
 
 
 def get_client(ctx: Context) -> Any:
@@ -198,7 +211,7 @@ def build_server(
 
     if settings.mcp_metrics:
         metrics.enable(lambda name: name in getattr(mcp, "_stutters_tiers", {}))
-        metrics.set_info(spec.name, _server_version(spec.name), __version__)
+        metrics.set_info(spec.name, _server_version(spec) or "unknown", __version__)
         if settings.mcp_metrics_port is None:
             _register_metrics_route(mcp, auth)
 
@@ -231,15 +244,6 @@ def _enable_tasks(mcp: FastMCP[Any], settings: BaseServerSettings) -> None:
             "MCP_TASKS=true needs the tasks extra: install stutters-mcp-core[tasks] (fastmcp-tasks)"
         ) from None
     mcp.add_extension(TasksExtension(url=settings.mcp_tasks_url))
-
-
-def _server_version(name: str) -> str:
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version(name)
-    except PackageNotFoundError:
-        return "unknown"
 
 
 def _register_metrics_route(mcp: FastMCP[Any], auth: AuthProvider | None) -> None:
@@ -316,6 +320,7 @@ def _register_status(
         )
         out["server"] = {
             "name": spec.name,
+            "server_version": _server_version(spec),
             "core_version": __version__,
             "url": scrub_url(target_cfg.url),
             "tls_verify": target_cfg.verify_ssl or target_cfg.ca_bundle is not None,

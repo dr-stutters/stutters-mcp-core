@@ -233,3 +233,19 @@ def test_audit_rotation_settings() -> None:
     assert s.mcp_audit_log_max_mb is None and s.mcp_audit_log_backups == 3
     with pytest.raises(ValueError):
         make_settings(mcp_audit_log_max_mb=0)
+
+
+async def test_status_reports_server_version(api: Any) -> None:
+    from dataclasses import replace
+
+    from stutters_mcp_core import build_server
+
+    from .demo import SPEC, DemoApp
+
+    server = build_server(
+        replace(SPEC, version="9.9.9"), make_settings(), client_factory=DemoApp, register=[]
+    )
+    data = await call_tool(server, "demo_status")
+    assert data["server"]["server_version"] == "9.9.9"
+    unknown = await call_tool(create_server(make_settings()), "demo_status")
+    assert unknown["server"]["server_version"] is None  # demo-mcp-server isn't an installed distribution
