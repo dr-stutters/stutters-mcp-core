@@ -133,9 +133,14 @@ class EventBuffer:
 
     def _limit_size(self, event: Event) -> int:
         """Estimated memory cost of `event`, truncating oversized `data` first."""
-        data_size = len(json.dumps(event.data, default=str)) if event.data else 0
+        try:
+            text = json.dumps(event.data, default=str) if event.data else ""
+        except (ValueError, TypeError, RecursionError):  # circular or unserialisable data
+            text = str(event.data)
+            event.data = {"unserialisable": True, "preview": text[:2000]}
+        data_size = len(text)
         if data_size > self.max_event_bytes:
-            preview = json.dumps(event.data, default=str)[:2000]
+            preview = text[:2000]
             event.data = {"truncated": True, "original_size": data_size, "preview": preview}
             data_size = len(preview) + 80
         if len(event.summary) > 2000:

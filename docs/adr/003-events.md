@@ -42,7 +42,8 @@ source adds `source`.
 - Filters: source, type (exact or prefix), key (`name=value` or a bare value against every key),
   severity, time window (ISO 8601 or an age like `15m`), summary text. Results come newest first.
 - Memory is bounded by count and by an estimated byte budget (`MCP_EVENT_BUFFER_MAX_MB`, default 64);
-  one event's `data` above 64 KiB is replaced by a truncated preview.
+  one event's `data` above 64 KiB is replaced by a truncated preview. The budget counts serialised
+  characters, so resident memory is a few times higher; size the container accordingly.
 - In memory only; a restart empties it. SQLite write-through is C6 (Next).
 
 ### Sources
@@ -108,6 +109,8 @@ default** and enabled through `from_settings(settings, ...)`.
 - Secrets in `MCP_WEBHOOK_SECRETS` may not contain commas. Every secret, including a Basic password,
   needs at least 16 characters.
 - Error text shown in `<prefix>_event_sources` is scrubbed of credential-looking values.
+- A route that is not served (stdio without `MCP_WEBHOOK_PORT`, or a dedicated port that failed to
+  bind) puts the receiver in state `failed` with the reason. Fix the setting or the port and restart.
 - `X-Forwarded-For` is never trusted. Behind the relay or a proxy the peer is the tunnel end, so the
   allow-list can only name that, and the secret is the real control.
 - Replay protection (timestamped signatures) is product-specific and left to each parser.

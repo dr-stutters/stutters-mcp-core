@@ -109,6 +109,12 @@ def test_last_error_scrubbed() -> None:
     text = _scrub("GET https://admin:hunter2@ise/x?token=abc123&x=1 failed: password='p@ss' api_key: K")
     assert "hunter2" not in text and "abc123" not in text and "p@ss" not in text and " K" not in text
     assert "x=1" in text
+    assert "eyJabc.def" not in _scrub("401 for Authorization: Bearer eyJabc.def.ghi")
+    loop: dict[str, Any] = {}
+    loop["self"] = loop
+    buf = EventBuffer(5)
+    stored = buf.add(ev(data=loop))
+    assert stored is not None and stored.data["unserialisable"] is True
 
 
 def test_buffer_dedupe_by_source_and_id_with_window() -> None:

@@ -38,14 +38,16 @@ class SourceConfigError(Exception):
 
 
 _SECRETISH = re.compile(
-    r"((?:token|password|passwd|secret|api_?key|key|auth|signature|sig)[\"']?\s*[=:]\s*[\"']?)[^\s&,;\"']+",
+    r"((?:token|password|passwd|secret|api_?key|key|authorization|auth|signature|sig)[\"']?\s*[=:]\s*[\"']?)[^\s&,;\"']+",
     re.IGNORECASE,
 )
+_BEARER = re.compile(r"\b((?:bearer|basic|token)\s+)[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
 _URL_CREDS = re.compile(r"(\w+://)[^/\s:@]+:[^/\s@]+@")
 
 
 def _scrub(text: str) -> str:
     """Mask credential-looking values in error text shown by <prefix>_event_sources."""
+    text = _BEARER.sub(r"\1***", text)
     return _URL_CREDS.sub(r"\1***@", _SECRETISH.sub(r"\1***", text))
 
 

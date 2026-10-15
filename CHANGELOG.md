@@ -16,7 +16,7 @@ All notable changes to this project are documented here. The format follows
 - Inbound receivers (#9): `WebhookReceiver` (`POST /events/<source>` on the MCP HTTP app or a dedicated
   `MCP_WEBHOOK_PORT` listener; shared-secret header, HMAC or Basic auth; fails closed without a secret; allow-list,
   body limit, rate limit) and `SyslogReceiver` (UDP/TCP, RFC 5424/3164 + Cisco IOS/FTD forms, octet-counted and
-  newline TCP framing, per-sender allow-list and rate limit). `MCP_EVENT_*`, `MCP_WEBHOOK*_*`, `MCP_SYSLOG_*`
+  newline TCP framing, per-sender allow-list, rate limit and connection cap). `MCP_EVENT_BUFFER_SIZE`/`_MAX_MB`, `MCP_WEBHOOK*_*`, `MCP_SYSLOG_*`
   settings, all off by default. Dockerfile/compose templates show the optional ports.
 - MCP prompts (#7): `ToolRegistrar.prompt(...)` / `PromptRegistrar` register workflow prompts `<prefix>_<workflow>` with
   `meta={"uses": [...], "tools": [...], "tier": ...}`; `tool_ref()` / `prompts.find_tool_refs()` for tool names in prompt bodies;
