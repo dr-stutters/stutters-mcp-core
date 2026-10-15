@@ -81,7 +81,10 @@ class Settings(BaseServerSettings):
 You get for free: `<P>_URL, _USERNAME, _PASSWORD, _TOKEN, _VERIFY_SSL, _CA_BUNDLE, _TIMEOUT, _RETRIES,
 _RATE_LIMIT, _MAX_CONCURRENCY` plus `MCP_TRANSPORT/HOST/PORT/PATH/AUTH_TOKENS(_FILE)`,
 `MCP_ENABLE_WRITES`, `MCP_ENABLE_DANGEROUS`, `MCP_CONFIRM_TTL`, `MCP_CACHE_DIR`,
-`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`.
+`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`, and for events
+`MCP_EVENT_BUFFER_SIZE`, `MCP_EVENT_BUFFER_MAX_MB`, `MCP_WEBHOOKS_ENABLED/_PATH/_HOST/_PORT/_SECRETS/_ALLOW_IPS/_MAX_BODY/_RATE_LIMIT`,
+`MCP_SYSLOG_ENABLED/_HOST/_UDP_PORT/_TCP_PORT/_ALLOW_IPS/_RATE_LIMIT/_MAX_MESSAGE/_MAX_CONNECTIONS` (§5b).
+Opt-in switches for your own pollers belong in your Settings (e.g. `ISE_EVENTS_POLL: bool = False`).
 
 ## 4. client.py: the "app" object
 
@@ -196,6 +199,74 @@ Every write step stays preview-first: show the preview and wait for approval."""
   not in `uses`, missing argument docs, and bad names or descriptions. Checking the *other* servers' tool
   names is the prompt test kit (C9, Next).
 
+## 5b. Events
+
+Design and security model: [ADR-003](adr/003-events.md). A server gets an in-memory event buffer, the
+tools `<prefix>_list_events` / `<prefix>_event_sources` and the resource `events://<prefix>/recent` by
+passing `event_sources=` to `build_server`. That is a function of the app object returning EventSources;
+it runs in the lifespan, after the status probe.
+
+```python
+from datetime import datetime
+from stutters_mcp_core.events import Event, EventOptions, PollingEventSource, SyslogMessage, \
+    SyslogReceiver, WebhookAuth, WebhookReceiver
+
+# 1. A poller (every server's first source). `since` = start of the previous successful poll (None first).
+async def poll_issues(app: CatcApp, since: datetime | None) -> list[Event]:
+    data = await app.api.get("/dna/intent/api/v1/issues", {"startTime": ms(since)} if since else None)
+    return [Event(type=f"issue.{i['priority'].lower()}", summary=i["name"], time=from_ms(i["last_occurence_time"]),
+                  keys={"device": i.get("deviceId", ""), "site": i.get("siteId", "")},
+                  severity=SEVERITY.get(i["priority"]), id=i["issueId"], data=i)
+            for i in data["response"]]
+
+# 2. A syslog parser (FMC): None ignores a message.
+def ftd_event(msg: SyslogMessage) -> Event | None:
+    if msg.cisco_mnemonic not in {"430002", "430003", "106023"}:
+        return None
+    f = parse_ftd_fields(msg.message)
+    return Event(type=f"fw.{msg.cisco_mnemonic}", summary=msg.message[:200], time=msg.timestamp,
+                 keys={"ip": f.get("SrcIP", ""), "dst": f.get("DstIP", ""), "rule": f.get("AccessControlRuleName", ""),
+                       "device": msg.hostname or msg.peer}, severity="info", data=f)
+
+def create_server(settings, *, auth=None, transport=None):
+    def event_sources(app) -> list:
+        return [
+            PollingEventSource("issues", lambda since: poll_issues(app, since), interval=60,
+                               enabled=settings.events_poll, disabled_reason="set CATC_EVENTS_POLL=true",
+                               description="Assurance issues (poll)"),
+            WebhookReceiver.from_settings(settings, "catc", parse=catc_webhook_events,
+                                          auth=WebhookAuth.header("X-Catc-Token")),   # secret: MCP_WEBHOOK_SECRETS
+            SyslogReceiver.from_settings(settings, to_event=ftd_event),
+        ]
+    return build_server(SPEC, settings, ..., event_sources=event_sources, auth=auth)
+```
+
+- **Event fields**: `type` dotted, lower-case, general first (`auth.fail`); `keys` for correlation
+  (`mac`, `ip`, `user`, `device`, `site`, `rule`); `time` = occurrence time (lag = received − time);
+  `id` = the product's id (duplicates per source are dropped, so overlapping polls and webhook+poll are safe).
+- **Pollers** dedupe by `id` (else a hash of type/time/summary/keys), sort each batch by time, retry with
+  backoff on errors, and can skip history with `emit_initial=False`. Poll gently (≥ 30–60 s; FMC allows
+  ~120 req/min in total).
+- **Streams** (pxGrid, CML websocket, eStreamer): subclass `EventSource`, implement `run()`: connect, call
+  `self.set_connected()`, loop `self.emit(Event(...))`; return/raise when the connection drops and the
+  supervisor reconnects with backoff. Raise `SourceConfigError` for unfixable config (missing cert).
+  Count lost input with `self.drop("reason")`; add fields to the status with `extra_status()`.
+- **Receivers are off by default**; `from_settings` lists them as `disabled` (with the variable to set)
+  until `MCP_WEBHOOKS_ENABLED` / `MCP_SYSLOG_ENABLED` is true. Webhooks need `MCP_WEBHOOK_SECRETS=<source>:<secret>`
+  (≥ 16 chars) or they fail closed. They are served on the MCP HTTP port at `/events/<source>` unless
+  `MCP_WEBHOOK_PORT` sets a dedicated listener (needed with stdio, or to bind 127.0.0.1 for the CML relay).
+- **Through the CML relay** (lab → cortex, P1): TCP only, so syslog over TCP; publish the receiver ports on
+  `127.0.0.1` in compose (see the commented lines in `docs/templates/docker-compose.yml`) and allow-list
+  the tunnel end. The peer address is the tunnel, so the webhook secret is the real control.
+- **Tool names**: `EventOptions(list_tool=..., sources_tool=..., resource=...)`; `None` drops one. Keep the
+  generic `<prefix>_list_events` (catc renames its assurance tool to `catc_list_assurance_events`); a
+  server that can't uses `EventOptions(list_tool="{prefix}_list_buffered_events")`.
+- **Tools that emit**: `get_events(ctx).buffer` / `.sources[name].emit(...)` from inside a tool, e.g.
+  to record an audit event after a write.
+- **Tests**: `buffer = EventBuffer(100); src.buffer = buffer; await src.poll_once()` for pollers (respx for HTTP);
+  `SyslogReceiver(udp_port=0, tcp_port=0)` + real sockets; webhooks via `mcp.http_app()` and
+  `httpx.ASGITransport(app, client=(ip, port))` (see core's `tests/unit/test_webhooks.py`).
+
 ## 6. server.py
 
 ```python
@@ -215,7 +286,8 @@ def create_server(settings, *, auth=None, transport=None):
 ```
 
 `build_server` adds `<prefix>_status`, `<prefix>_search_spec`, `<prefix>_get_definition`,
-`<prefix>_api_call`, `/health`, audit logging and the writes/dangerous instructions.
+`<prefix>_api_call`, `/health`, audit logging and the writes/dangerous instructions; with
+`event_sources=` also `<prefix>_list_events`, `<prefix>_event_sources`, `events://<prefix>/recent` (§5b).
 `<prefix>_api_call` only accepts non-GET methods when dangerous is enabled.
 
 **Always forward `auth=` to `build_server`.** If it's missing, the HTTP transport runs unauthenticated.
