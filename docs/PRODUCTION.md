@@ -152,6 +152,9 @@ Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loade
   (`user:pass@` in URLs, whole-word secret keys such as `password=` / `?token=` / `"secret": "..."`,
   Authorization / Cookie / `X-*-Token` headers, `Bearer <credential>`), including tracebacks.
 - Tool errors returned to the MCP client are scrubbed the same way.
+- Limits: value masking is whole-word (so a weak password like `admin` doesn't mangle "administrator"); a
+  secret glued to other letters or digits is only caught by the shape rules. Use strong, unique credentials.
+  Tokens obtained at runtime (session cookies) are masked only if the server calls `register_secret`.
 - Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
   shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
 - `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and

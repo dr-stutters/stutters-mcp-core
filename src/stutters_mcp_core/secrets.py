@@ -41,10 +41,16 @@ _URL_USERINFO = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)(?P<userinfo>
 # key=value in query strings and log text; the key is checked by _secret_key (whole words only).
 _KEY_VALUE = re.compile(r"(?P<lead>(?:^|(?<=[?&;\s,(])))(?P<key>[A-Za-z][\w.-]*)=(?P<value>[^&\s#;'\",)]+)")
 # "key": "value" (JSON) and Header-Name: value
-_JSON_PAIR = re.compile(r"(?P<key>\"[A-Za-z][\w.-]*\")\s*:\s*\"(?P<value>[^\"]*)\"")
-_HEADER = re.compile(
-    r"(?P<key>\b(?:Proxy-)?Authorization|\bX-[\w-]*(?:Token|Key|Secret|Auth)[\w-]*|\bCookie|\bSet-Cookie)"
-    r"(?P<sep>\s*[:=]\s*)(?P<value>[^\r\n,;]+)",
+_JSON_PAIR = re.compile(
+    r"(?P<key>(?P<q>[\"'])[A-Za-z][\w.-]*(?P=q))\s*:\s*(?P<q2>[\"'])(?P<value>(?:(?!(?P=q2)).)*)(?P=q2)"
+)
+_AUTH_HEADER = re.compile(
+    r"(?P<key>\b(?:Proxy-)?Authorization\s*[:=]\s*(?:Basic|Bearer|Digest|Negotiate|Token|NTLM)\s+)(?P<value>\S+)",
+    re.IGNORECASE,
+)
+# Cookie / Set-Cookie / X-...-Token headers: the whole rest of the line.
+_LINE_HEADER = re.compile(
+    r"(?P<key>\b(?:(?:Set-)?Cookie|X-[\w-]*(?:Token|Key|Secret|Auth)[\w-]*)\s*:\s*)(?P<value>[^\r\n]+)",
     re.IGNORECASE,
 )
 # A bare "Bearer <credential>": the value must look like a credential (16+ chars with a digit).
@@ -55,10 +61,12 @@ _SECRET_KEYS = {"sig", "signature", "api_key", "api-key", "private_key", "psk", 
 
 
 def _secret_key(key: str) -> bool:
-    k = key.strip('"').lower()
+    k = key.strip("\"'").lower()
     if k in _SECRET_KEYS or k in _SECRET_WORDS:
         return True
-    return any(part in _SECRET_WORDS for part in re.split(r"[_.-]", k)) or k.endswith(("token", "password"))
+    if any(part in _SECRET_WORDS for part in re.split(r"[_.-]", k)):
+        return True
+    return k.endswith(("token", "password", "passwd", "secret", "apikey", "api_key", "privatekey"))
 
 
 def scrub_text(text: str) -> str:
@@ -68,7 +76,8 @@ def scrub_text(text: str) -> str:
     if not text:
         return text
     text = _URL_USERINFO.sub(lambda m: f"{m.group('scheme')}{MASK}@", text)
-    text = _HEADER.sub(lambda m: f"{m.group('key')}{m.group('sep')}{MASK}", text)
+    text = _AUTH_HEADER.sub(lambda m: f"{m.group('key')}{MASK}", text)
+    text = _LINE_HEADER.sub(lambda m: f"{m.group('key')}{MASK}", text)
     text = _BEARER.sub(f"Bearer {MASK}", text)
     text = _KEY_VALUE.sub(
         lambda m: f"{m.group('lead')}{m.group('key')}={MASK}" if _secret_key(m.group("key")) else m.group(0),
@@ -76,9 +85,9 @@ def scrub_text(text: str) -> str:
     )
 
     def json_pair(m: re.Match[str]) -> str:
-        return (
-            f'{m.group("key")}: "{MASK}"' if _secret_key(m.group("key")) and m.group("value") else m.group(0)
-        )
+        if _secret_key(m.group("key")) and m.group("value"):
+            return f"{m.group('key')}: {m.group('q2')}{MASK}{m.group('q2')}"
+        return m.group(0)
 
     return _JSON_PAIR.sub(json_pair, text)
 
@@ -144,6 +153,19 @@ class SecretScrubber:
         clean = self.text(rendered)
         return arg if clean == rendered else clean
 
+    def _scrubbed_exc(self, exc: BaseException) -> BaseException:
+        message = self.text(str(exc))
+        try:
+            new = type(exc)(message)
+            if str(new) != message:
+                raise TypeError
+        except Exception:  # noqa: BLE001 - exception types with other constructors
+            new = RuntimeError(f"{type(exc).__name__}: {message}")
+        new.__traceback__ = exc.__traceback__
+        new.__cause__ = None
+        new.__suppress_context__ = True
+        return new
+
     def record(self, record: logging.LogRecord) -> None:
         """Scrub a record in place: msg, each argument (kept separate, since some formatters such as
         uvicorn's access log unpack `record.args`), the formatted traceback (exc_text; exc_info is kept)
@@ -157,7 +179,17 @@ class SecretScrubber:
         elif isinstance(record.args, dict):
             record.args = {k: self._arg(v) for k, v in record.args.items()}
         if record.exc_info and record.exc_info[1] is not None and not record.exc_text:
-            record.exc_text = self.text(logging.Formatter().formatException(record.exc_info))
+            formatted = logging.Formatter().formatException(record.exc_info)
+            clean = self.text(formatted)
+            record.exc_text = clean
+            if clean != formatted:
+                # Some handlers (Rich, used by FastMCP) render exc_info themselves and ignore exc_text:
+                # swap in an exception carrying the scrubbed text (chained exceptions dropped).
+                record.exc_info = (
+                    record.exc_info[0],
+                    self._scrubbed_exc(record.exc_info[1]),
+                    record.exc_info[2],
+                )
         if record.stack_info:
             record.stack_info = self.text(record.stack_info)
 
@@ -198,6 +230,12 @@ def install_secret_filter(settings: Any, loggers: Iterable[logging.Logger] = ())
         _installed = scrubber
     _installed.add(secret_values(settings))
     return _installed
+
+
+def reset_secret_filter() -> None:
+    """Forget the values registered with the installed scrubber (tests); the factory stays installed."""
+    if _installed is not None:
+        _installed.values.clear()
 
 
 def register_secret(value: str) -> None:

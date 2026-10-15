@@ -37,6 +37,9 @@ RAW_TOKEN = "raw-token-value-abcdefghijklmnop"
         ('body {"password": "hunter22", "name": "r1"}', "hunter22"),
         ("login password=hunter22 rejected", "hunter22"),
         ("?client_secret=zz11", "zz11"),
+        ("Cookie: a=b; sessionid=SECRETVAL", "SECRETVAL"),
+        ("ValueError: {'password': 'hunter22'}", "hunter22"),
+        ("clientSecret=abc123xyz", "abc123xyz"),
     ],
 )
 def test_scrub_text_masks_credential_shapes(text: str, leaked: str) -> None:
@@ -54,6 +57,7 @@ def test_scrub_text_masks_credential_shapes(text: str, leaked: str) -> None:
         "?author=bob&sig_count=1&authority=x&authenticated=true&design=a&assignment=b&signal=c",
         'detail {"key": "name", "passwordPolicy": "", "authType": "radius"}',
         "Bearer token missing",
+        "Authorization: required for this endpoint, retry",
     ],
 )
 def test_scrub_text_leaves_normal_text(text: str) -> None:
@@ -112,6 +116,21 @@ async def test_tool_errors_returned_to_client_are_scrubbed() -> None:
         with pytest.raises(ToolError) as exc:
             await call_tool(create_server(settings), "demo_get_item", {"item_id": "1"})
     assert "bad credential" in str(exc.value) and PASSWORD not in str(exc.value)
+
+
+def test_fastmcp_rich_traceback_is_scrubbed(capsys: pytest.CaptureFixture[str]) -> None:
+    from fastmcp.utilities.logging import configure_logging
+
+    install_secret_filter(make_settings(password=PASSWORD))
+    configure_logging("INFO")
+    lg = logging.getLogger("fastmcp.server.test")
+    try:
+        raise ValueError(f"bad password {PASSWORD} here")
+    except ValueError:
+        lg.exception("Error calling tool 'x'")
+    err = capsys.readouterr().err
+    assert "Error calling tool" in err and "bad password" in err
+    assert PASSWORD not in err
 
 
 def test_filter_masks_values_args_and_tracebacks() -> None:
