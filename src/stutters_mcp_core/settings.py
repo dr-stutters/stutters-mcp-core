@@ -157,6 +157,27 @@ class BaseServerSettings(BaseSettings):
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
+    # --- OAuth 2.1 for HTTP (G1, stutters_mcp_core.oauth); off unless MCP_OAUTH_PROVIDER is set
+    mcp_oauth_provider: Literal["github", "oidc"] | None = Field(
+        default=None, validation_alias=_alias("MCP_OAUTH_PROVIDER")
+    )
+    mcp_oauth_client_id: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_CLIENT_ID"))
+    mcp_oauth_client_secret: SecretStr | None = Field(
+        default=None, validation_alias=_alias("MCP_OAUTH_CLIENT_SECRET")
+    )
+    mcp_oauth_base_url: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_BASE_URL"))
+    mcp_oauth_config_url: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_CONFIG_URL"))
+    mcp_oauth_allowed_users: str | None = Field(
+        default=None, validation_alias=_alias("MCP_OAUTH_ALLOWED_USERS")
+    )
+    mcp_oauth_scopes: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_SCOPES"))
+    mcp_oauth_login_claim: str | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_LOGIN_CLAIM"))
+    mcp_oauth_redirect_uris: str | None = Field(
+        default=None, validation_alias=_alias("MCP_OAUTH_REDIRECT_URIS")
+    )
+    mcp_oauth_jwt_key: SecretStr | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_JWT_KEY"))
+    mcp_oauth_storage_dir: Path | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_STORAGE_DIR"))
+
     # --- metrics (G5, stutters_mcp_core.metrics); off by default -------------------------
     mcp_metrics: bool = Field(default=False, validation_alias=_alias("MCP_METRICS"))
     mcp_metrics_port: int | None = Field(
@@ -207,7 +228,7 @@ class BaseServerSettings(BaseSettings):
                 raw = raw[len(prefix) :].strip()
         return SecretStr(raw) if raw else None
 
-    @field_validator("mcp_cache_dir", "ca_bundle", "mcp_roles_file", mode="before")
+    @field_validator("mcp_cache_dir", "ca_bundle", "mcp_roles_file", "mcp_oauth_storage_dir", mode="before")
     @classmethod
     def _empty_path_is_none(cls, v: object) -> object:
         if isinstance(v, str):
@@ -221,6 +242,14 @@ class BaseServerSettings(BaseSettings):
         "mcp_blast_radius_overrides",
         "mcp_two_person_tools",
         "mcp_roles",
+        "mcp_oauth_provider",
+        "mcp_oauth_client_id",
+        "mcp_oauth_base_url",
+        "mcp_oauth_config_url",
+        "mcp_oauth_allowed_users",
+        "mcp_oauth_scopes",
+        "mcp_oauth_login_claim",
+        "mcp_oauth_redirect_uris",
         mode="before",
     )
     @classmethod
@@ -236,6 +265,41 @@ class BaseServerSettings(BaseSettings):
     def _dangerous_needs_writes(self) -> BaseServerSettings:
         if self.mcp_enable_dangerous and not self.mcp_enable_writes:
             raise ValueError("MCP_ENABLE_DANGEROUS=true also requires MCP_ENABLE_WRITES=true")
+        return self
+
+    @model_validator(mode="after")
+    def _oauth_complete(self) -> BaseServerSettings:
+        if not self.mcp_oauth_provider:
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("MCP_OAUTH_CLIENT_ID", self.mcp_oauth_client_id),
+                ("MCP_OAUTH_BASE_URL", self.mcp_oauth_base_url),
+                ("MCP_OAUTH_ALLOWED_USERS", self.mcp_oauth_allowed_users),
+            )
+            if not value
+        ]
+        if self.mcp_oauth_provider == "github" and self.mcp_oauth_client_secret is None:
+            missing.append("MCP_OAUTH_CLIENT_SECRET")
+        if self.mcp_oauth_provider == "oidc" and not self.mcp_oauth_config_url:
+            missing.append("MCP_OAUTH_CONFIG_URL")
+        if (
+            self.mcp_oauth_provider == "oidc"
+            and self.mcp_oauth_client_secret is None
+            and not self.mcp_oauth_jwt_key
+        ):
+            missing.append("MCP_OAUTH_CLIENT_SECRET (or MCP_OAUTH_JWT_KEY for a public client)")
+        if missing:
+            raise ValueError(f"MCP_OAUTH_PROVIDER={self.mcp_oauth_provider} also needs {', '.join(missing)}")
+        if self.mcp_oauth_jwt_key is not None and len(self.mcp_oauth_jwt_key.get_secret_value()) < 32:
+            raise ValueError(
+                "MCP_OAUTH_JWT_KEY must be at least 32 characters (e.g. openssl rand -base64 32)"
+            )
+        if self.mcp_oauth_base_url and not self.mcp_oauth_base_url.startswith(
+            ("https://", "http://localhost", "http://127.0.0.1")
+        ):
+            raise ValueError("MCP_OAUTH_BASE_URL must be https:// (http only for localhost)")
         return self
 
     @model_validator(mode="after")
