@@ -17,7 +17,9 @@ All notable changes to this project are documented here. The format follows
   (`configure_audit_log(path, max_mb=, backups=)`); unset = unchanged.
 - **Session tokens masked automatically (C14)**: `LoginTokenAuth` registers every token it obtains (header values,
   the credential after `Bearer `, secret-named `Token.data` such as refresh tokens) with the log scrubber and
-  tool-error scrubbing (`secrets.register_header_values`); the newest 64 runtime values are kept.
+  tool-error scrubbing (`secrets.register_header_values`; credential headers only: Authorization, Cookie, `*Token*`
+  and secret-named headers); the newest 64 runtime values are kept. `SecretScrubber.values` is now a read-only
+  snapshot (`frozenset`); register values with `add` / `add_runtime`.
 - **Per-caller rate limit (C16)**: `MCP_CALLER_RATE_LIMIT` (calls/min per caller) and `MCP_CALLER_RATE_LIMIT_BY_ROLE`;
   refusals are audited (`rate_limited`) and counted (`mcp_rate_limited_total`); status is exempt. Off by default.
 

@@ -99,7 +99,7 @@ def _register_token(token: Token) -> None:
 
     register_header_values(token.headers)
     for key, value in token.data.items():
-        if isinstance(value, str) and is_secret_key(key):
+        if isinstance(value, str) and (is_secret_key(key) or "refresh" in key.lower()):
             register_secret(value)
 
 

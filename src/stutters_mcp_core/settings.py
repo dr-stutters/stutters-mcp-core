@@ -366,7 +366,9 @@ class BaseServerSettings(BaseSettings):
     def _rate_limits_parse(self) -> BaseServerSettings:
         from stutters_mcp_core.inbound_limits import parse_role_limits
 
-        parse_role_limits(self.mcp_caller_rate_limit_by_role)
+        by_role = parse_role_limits(self.mcp_caller_rate_limit_by_role)
+        if by_role and self.mcp_roles is None and self.mcp_roles_file is None:
+            raise ValueError("MCP_CALLER_RATE_LIMIT_BY_ROLE needs MCP_ROLES (or MCP_ROLES_FILE)")
         return self
 
     @model_validator(mode="after")

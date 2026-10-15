@@ -97,9 +97,11 @@ def configure_audit_log(destination: str, *, max_mb: float | None = None, backup
     elif max_mb:
         from logging.handlers import RotatingFileHandler
 
-        handler = RotatingFileHandler(destination, maxBytes=int(max_mb * 1024 * 1024), backupCount=backups)
+        handler = RotatingFileHandler(
+            destination, maxBytes=int(max_mb * 1024 * 1024), backupCount=backups, encoding="utf-8", delay=True
+        )
     else:
-        handler = logging.FileHandler(destination)
+        handler = logging.FileHandler(destination, encoding="utf-8")
     handler.setFormatter(logging.Formatter('{"ts":"%(asctime)s","audit":%(message)s}'))
     audit.addHandler(handler)
     audit.setLevel(logging.INFO)

@@ -274,3 +274,20 @@ async def test_login_session_tokens_are_masked_automatically(capsys: pytest.Capt
     for i in range(SecretScrubber.RUNTIME_KEEP + 5):
         s.add_runtime(f"token-value-{i:04d}")
     assert len(s.runtime) == SecretScrubber.RUNTIME_KEEP and "token-value-0000" not in s.values
+
+
+def test_only_credential_headers_are_registered() -> None:
+    from stutters_mcp_core.secrets import SecretScrubber, register_header_values
+
+    s = install_secret_filter(make_settings())
+    before = set(s.values)
+    register_header_values(
+        {
+            "Accept": "application/json",
+            "X-Domain": "Global Domain",
+            "Authorization": "Bearer tok-abcdef123456",
+        }
+    )
+    added = set(s.values) - before
+    assert added == {"Bearer tok-abcdef123456", "tok-abcdef123456"}
+    assert isinstance(SecretScrubber().values, frozenset)

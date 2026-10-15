@@ -298,6 +298,7 @@ events carry `instance`. Roles and the tier switches are server-wide; write rule
 | `ISE_PROD_CHANGE_WINDOW="Mon-Fri 22:00-02:00 Australia/Sydney"` | confirms only inside that window (format as `MCP_CHANGE_WINDOW`) |
 | `ISE_PROD_MAX_BLAST_RADIUS=5` | blast-radius limit for that instance |
 
+They are enforced in `preview_or_apply`, which every write tool goes through (the tool contract requires it).
 They add to the server-wide `MCP_*` rails (both apply), show in previews under `policy.instance_rules`, and in
 `<prefix>_status(instance=...)` under `server.instance_rules`. They work on a single-instance server too
 (`ISE_READ_ONLY=true` makes the appliance read-only while write tools stay listed for previews).
@@ -328,7 +329,8 @@ appliance). Workers run in the server process; separate `fastmcp-tasks` worker p
 `MCP_AUDIT_LOG=/cache/audit.log` writes one JSON line per event (tool calls, previews, applies, refusals,
 denials). On a long-running server, also set `MCP_AUDIT_LOG_MAX_MB=50` (rotate at 50 MB) and
 `MCP_AUDIT_LOG_BACKUPS=5` (keep `audit.log.1` ... `audit.log.5`). Unset, the file is never rotated (as
-before). For central retention ship the file (or `MCP_AUDIT_LOG=stderr` via the container log driver) to your
+before). Give each server process its own file (e.g. `/cache/ise-audit.log`): rotation is per process, so
+two processes sharing one path would lose lines at rollover. For central retention ship the file (or `MCP_AUDIT_LOG=stderr` via the container log driver) to your
 log platform; every line starts `{"ts": ..., "audit": {...}}`.
 
 ## Per-caller rate limit (core 0.11.0, roadmap C16)
