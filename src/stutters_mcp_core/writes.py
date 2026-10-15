@@ -198,12 +198,20 @@ class ToolRegistrar:
         tools: Iterable[str] = (),
         tier: Tier = Tier.READ,
         tags: set[str] | None = None,
+        example: dict[str, str] | None = None,
     ) -> Callable[[F], F]:
         """Register a workflow prompt `<prefix>_<workflow>` (see stutters_mcp_core.prompts)."""
         from stutters_mcp_core.prompts import PromptRegistrar
 
         return PromptRegistrar(self.mcp, self.settings, self.prefix).prompt(
-            title=title, name=name, description=description, uses=uses, tools=tools, tier=tier, tags=tags
+            title=title,
+            name=name,
+            description=description,
+            uses=uses,
+            tools=tools,
+            tier=tier,
+            tags=tags,
+            example=example,
         )
 
     def dangerous(

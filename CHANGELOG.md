@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-15
+
+### Fixed
+- **Reusable release workflow broke consumer releases** (FMC/ISE v0.4.0): image attestations failed on the default
+  docker driver. Provenance/SBOM attestations are now opt-in (`attest: true`, which sets up the docker-container
+  builder); Trivy reports by default (`scan-fail: true` to enforce); the GitHub-release step is idempotent (re-runs
+  and hand-made releases get their assets replaced). Callers need only `contents/packages/id-token: write`.
+- `ToolRegistrar.prompt()` dropped `example=` (only `PromptRegistrar.prompt` honoured it).
+
 ### Added
 - **Least-privilege kit (G3)**: `docs/least-privilege-template.md` (the per-server guide skeleton: role tables,
   creation steps, seed script, verification) and `stutters_mcp_core.testing.least_privilege`:

@@ -252,3 +252,25 @@ def test_init_value_skips_secret_file(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("DEMO_PASSWORD_FILE", str(tmp_path / "missing"))
     s = DemoSettings(_env_file=None, password="given")  # type: ignore[call-arg,arg-type]
     assert s.password_value() == "given"
+
+
+def test_registrar_prompt_passes_example() -> None:
+    from typing import Annotated
+
+    from fastmcp import FastMCP
+    from pydantic import Field
+
+    from stutters_mcp_core import ToolRegistrar
+    from stutters_mcp_core.prompts import registered_prompts
+
+    from .demo import make_settings
+
+    mcp: FastMCP = FastMCP("x")
+    reg = ToolRegistrar(mcp, make_settings(), "demo")
+
+    @reg.prompt(title="Check a MAC", example={"mac": "AA:BB:CC:DD:EE:FF"})
+    def demo_check_mac(mac: Annotated[str, Field(description="Endpoint MAC address")]) -> str:
+        """Check one endpoint by MAC address: sessions, failure reason and policy hit, step by step."""
+        return f"Check {mac} with `demo_list_items`."
+
+    assert registered_prompts(mcp)["demo_check_mac"]["example"] == {"mac": "AA:BB:CC:DD:EE:FF"}
