@@ -95,7 +95,7 @@ jobs:
           upload-release-assets: true
       - name: Image scan (Trivy)
         if: inputs.image
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.img.outputs.name }}@${{ steps.build.outputs.digest }}
           severity: ${{ inputs.scan-severity }}
