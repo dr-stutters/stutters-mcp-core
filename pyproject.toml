@@ -1,6 +1,6 @@
 [project]
 name = "stutters-mcp-core"
-version = "0.1.2"
+version = "0.2.0"
 description = "Shared FastMCP foundation for the network MCP servers"
 readme = "README.md"
 license = "MIT"
