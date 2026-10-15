@@ -83,8 +83,9 @@ class AuditMiddleware(Middleware):
             audit.info(json.dumps(event, default=str))
 
 
-def configure_audit_log(destination: str) -> None:
-    """Route the audit logger: 'stderr' (default), 'off', or a file path (appended)."""
+def configure_audit_log(destination: str, *, max_mb: float | None = None, backups: int = 5) -> None:
+    """Route the audit logger: 'stderr' (default), 'off', or a file path (appended). With `max_mb`, a file
+    rotates when it reaches that size, keeping `backups` old files (<file>.1 ... <file>.N)."""
     audit.propagate = False
     audit.handlers.clear()
     if destination.lower() in ("off", "none", "false", ""):
@@ -93,8 +94,14 @@ def configure_audit_log(destination: str) -> None:
     handler: logging.Handler
     if destination.lower() == "stderr":
         handler = logging.StreamHandler(sys.stderr)
+    elif max_mb:
+        from logging.handlers import RotatingFileHandler
+
+        handler = RotatingFileHandler(
+            destination, maxBytes=int(max_mb * 1024 * 1024), backupCount=backups, encoding="utf-8", delay=True
+        )
     else:
-        handler = logging.FileHandler(destination)
+        handler = logging.FileHandler(destination, encoding="utf-8")
     handler.setFormatter(logging.Formatter('{"ts":"%(asctime)s","audit":%(message)s}'))
     audit.addHandler(handler)
     audit.setLevel(logging.INFO)

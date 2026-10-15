@@ -30,7 +30,10 @@ ARGUMENT = "instance"  # the tool argument ("target" is already a parameter of s
 TARGET_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 # Settings a named instance never inherits from the default instance: where to connect, as whom, and how
 # the TLS connection is checked. Every SecretStr field and a product's `per_instance_fields` are added.
-NOT_INHERITED = frozenset({"url", "username", "password", "token", "verify_ssl", "ca_bundle"})
+NOT_INHERITED = frozenset(
+    {"url", "username", "password", "token", "verify_ssl", "ca_bundle"}
+    | {"read_only", "two_person", "change_window", "max_blast_radius"}  # per-instance write rules (C15)
+)
 
 current_target: ContextVar[str | None] = ContextVar("stutters_target", default=None)
 

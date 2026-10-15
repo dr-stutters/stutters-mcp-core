@@ -86,6 +86,7 @@ FAMILIES = {
             "mcp_rate_limit_waits_total", "counter", "Requests that waited for the client-side rate limiter."
         ),
         _Family("mcp_rate_limit_wait_seconds_total", "counter", "Time spent waiting for the rate limiter."),
+        _Family("mcp_rate_limited_total", "counter", "Tool calls refused by the per-caller rate limit."),
     )
 }
 

@@ -137,6 +137,12 @@ class BaseServerSettings(BaseSettings):
     retries: int = Field(default=2, ge=0, le=10)
     rate_limit: float | None = Field(default=None, gt=0, description="max requests per minute")
     max_concurrency: int | None = Field(default=None, ge=1)
+    # Per-appliance write rules (C15), read with the instance prefix (<P>_READ_ONLY, <P>_PROD_READ_ONLY...);
+    # they add to the server-wide MCP_* rails and are never inherited between instances.
+    read_only: bool = False
+    two_person: bool = False
+    change_window: str | None = None
+    max_blast_radius: int | None = Field(default=None, ge=0)
     # Fields a named instance never inherits from the default instance (G10), beyond URL, credentials,
     # TLS checking and secrets; products list appliance-specific ones, e.g. {"domain"} for FMC.
     per_instance_fields: ClassVar[frozenset[str]] = frozenset()
@@ -161,6 +167,13 @@ class BaseServerSettings(BaseSettings):
     )
     mcp_task_timeout: float = Field(default=600.0, gt=0, validation_alias=_alias("MCP_TASK_TIMEOUT"))
     mcp_audit_log: str = Field(default="stderr", validation_alias=_alias("MCP_AUDIT_LOG"))
+    # Rotation for a file audit log (C13); unset = no rotation (as before)
+    mcp_audit_log_max_mb: float | None = Field(
+        default=None, gt=0, validation_alias=_alias("MCP_AUDIT_LOG_MAX_MB")
+    )
+    mcp_audit_log_backups: int = Field(
+        default=5, ge=1, le=100, validation_alias=_alias("MCP_AUDIT_LOG_BACKUPS")
+    )
     log_level: str = Field(default="INFO", validation_alias=_alias("LOG_LEVEL"))
 
     # --- OAuth 2.1 for HTTP (G1, stutters_mcp_core.oauth); off unless MCP_OAUTH_PROVIDER is set
@@ -183,6 +196,14 @@ class BaseServerSettings(BaseSettings):
     )
     mcp_oauth_jwt_key: SecretStr | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_JWT_KEY"))
     mcp_oauth_storage_dir: Path | None = Field(default=None, validation_alias=_alias("MCP_OAUTH_STORAGE_DIR"))
+
+    # --- inbound per-caller rate limit (C16); off by default -----------------------------------
+    mcp_caller_rate_limit: float | None = Field(
+        default=None, gt=0, validation_alias=_alias("MCP_CALLER_RATE_LIMIT")
+    )
+    mcp_caller_rate_limit_by_role: str | None = Field(
+        default=None, validation_alias=_alias("MCP_CALLER_RATE_LIMIT_BY_ROLE")
+    )
 
     # --- MCP background tasks (C12): `reg.write(..., task=True)` tools become MCP tasks -------
     mcp_tasks: bool = Field(default=False, validation_alias=_alias("MCP_TASKS"))
@@ -252,6 +273,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_blast_radius_overrides",
         "mcp_two_person_tools",
         "mcp_roles",
+        "mcp_caller_rate_limit_by_role",
         "mcp_oauth_provider",
         "mcp_oauth_client_id",
         "mcp_oauth_base_url",
@@ -266,7 +288,13 @@ class BaseServerSettings(BaseSettings):
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("mcp_max_blast_radius", "mcp_metrics_port", mode="before")
+    @field_validator(
+        "mcp_max_blast_radius",
+        "mcp_metrics_port",
+        "mcp_audit_log_max_mb",
+        "mcp_caller_rate_limit",
+        mode="before",
+    )
     @classmethod
     def _blank_int_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
@@ -319,6 +347,28 @@ class BaseServerSettings(BaseSettings):
         if not TARGET_NAME_RE.match(self.default_instance):
             raise ValueError("DEFAULT_INSTANCE: use lowercase letters, digits and _ (start with a letter)")
         self.target_names()
+        return self
+
+    @field_validator("change_window", "max_blast_radius", mode="before")
+    @classmethod
+    def _blank_instance_rule(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v
+
+    @model_validator(mode="after")
+    def _instance_rules_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.policy import ChangeWindow
+
+        if self.change_window:
+            ChangeWindow.parse(self.change_window)
+        return self
+
+    @model_validator(mode="after")
+    def _rate_limits_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.inbound_limits import parse_role_limits
+
+        by_role = parse_role_limits(self.mcp_caller_rate_limit_by_role)
+        if by_role and self.mcp_roles is None and self.mcp_roles_file is None:
+            raise ValueError("MCP_CALLER_RATE_LIMIT_BY_ROLE needs MCP_ROLES (or MCP_ROLES_FILE)")
         return self
 
     @model_validator(mode="after")

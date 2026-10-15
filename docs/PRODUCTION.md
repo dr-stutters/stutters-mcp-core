@@ -154,7 +154,8 @@ Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loade
 - Tool errors returned to the MCP client are scrubbed the same way.
 - Limits: value masking is whole-word (so a weak password like `admin` doesn't mangle "administrator"); a
   secret glued to other letters or digits is only caught by the shape rules. Use strong, unique credentials.
-  Tokens obtained at runtime (session cookies) are masked only if the server calls `register_secret`.
+  Session tokens obtained through core's `LoginTokenAuth` are masked automatically (core 0.11.0); servers
+  call `register_secret` only for credentials they obtain some other way.
 - Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
   shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
 - `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and
@@ -287,8 +288,20 @@ ISE_PROD_CA_BUNDLE=/certs/prod-ca.pem  # TLS checking, secrets, URL and credenti
 Every tool then takes an optional `instance` argument (an enum of the names; omitted = the default
 instance). `<prefix>_status(instance=...)` shows that instance and lists them all; `<server> check` checks
 each. A confirm token only works on the instance it was previewed on, and previews, results and audit
-events carry `instance`. Safety rails, roles and the tier switches are server-wide: run a separate
-container for an instance that needs a different write policy (e.g. read-only production).
+events carry `instance`. Roles and the tier switches are server-wide; write rules can be set per instance
+(core 0.11.0, C15), each read with that instance's prefix and never inherited:
+
+| Variable (default instance / named) | Effect |
+|---|---|
+| `ISE_READ_ONLY` / `ISE_PROD_READ_ONLY=true` | writes on that instance are blocked (preview shows why; no token) |
+| `ISE_PROD_TWO_PERSON=true` | every write on it needs a second caller to confirm (`<prefix>_review_change` is registered) |
+| `ISE_PROD_CHANGE_WINDOW="Mon-Fri 22:00-02:00 Australia/Sydney"` | confirms only inside that window (format as `MCP_CHANGE_WINDOW`) |
+| `ISE_PROD_MAX_BLAST_RADIUS=5` | blast-radius limit for that instance |
+
+They are enforced in `preview_or_apply`, which every write tool goes through (the tool contract requires it).
+They add to the server-wide `MCP_*` rails (both apply), show in previews under `policy.instance_rules`, and in
+`<prefix>_status(instance=...)` under `server.instance_rules`. They work on a single-instance server too
+(`ISE_READ_ONLY=true` makes the appliance read-only while write tools stay listed for previews).
 
 ## Long-running calls as MCP tasks (core 0.10.0, roadmap C12)
 
@@ -311,3 +324,22 @@ Limits: roles are checked when the task is submitted (a role removed afterwards 
 a task whose caller credentials expired before it ran is refused (never run as `local`); `tasks/cancel` during
 an apply stops the tool but can leave an upstream change half-done (audit event `apply_cancelled`; check the
 appliance). Workers run in the server process; separate `fastmcp-tasks` worker processes are not supported.
+## Audit log rotation (core 0.11.0, roadmap C13)
+
+`MCP_AUDIT_LOG=/cache/audit.log` writes one JSON line per event (tool calls, previews, applies, refusals,
+denials). On a long-running server, also set `MCP_AUDIT_LOG_MAX_MB=50` (rotate at 50 MB) and
+`MCP_AUDIT_LOG_BACKUPS=5` (keep `audit.log.1` ... `audit.log.5`). Unset, the file is never rotated (as
+before). Give each server process its own file (e.g. `/cache/ise-audit.log`): rotation is per process, so
+two processes sharing one path would lose lines at rollover. For central retention ship the file (or `MCP_AUDIT_LOG=stderr` via the container log driver) to your
+log platform; every line starts `{"ts": ..., "audit": {...}}`.
+
+## Per-caller rate limit (core 0.11.0, roadmap C16)
+
+| Variable | Example | Effect |
+|---|---|---|
+| `MCP_CALLER_RATE_LIMIT` | `60` | tool calls per minute per caller identity (bursts up to a quarter of it) |
+| `MCP_CALLER_RATE_LIMIT_BY_ROLE` | `ro=30,admin=120` | per-role values (with `MCP_ROLES`); roles not listed use `MCP_CALLER_RATE_LIMIT` (or no limit) |
+
+A refused call says how long to wait; it is audited (`rate_limited`) and counted (`mcp_rate_limited_total`).
+`<prefix>_status` is never limited. This stops one runaway client or leaked token from monopolising the
+appliance; `<P>_RATE_LIMIT` still paces the server's own requests to the appliance.

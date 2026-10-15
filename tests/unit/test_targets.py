@@ -164,3 +164,54 @@ async def test_sync_tool_keeps_running_in_a_thread(two: Any) -> None:
     async with Client(mcp) as c:
         out = (await c.call_tool("demo_sync", {"instance": "prod"})).structured_content
     assert out == {"instance": "prod", "x": 1} and seen["thread"] is False
+
+
+async def test_per_instance_write_rules(two: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C15: production read-only and two-person, lab unrestricted, in one server."""
+    from stutters_mcp_core.testing import as_caller
+
+    monkeypatch.setenv("DEMO_PROD_READ_ONLY", "true")
+    server = multi(mcp_enable_writes=True, mcp_enable_dangerous=True)
+    async with Client(server) as c:
+        lab = (await c.call_tool("demo_create_item", {"name": "x"})).structured_content
+        assert lab["status"] == "preview" and "policy" not in lab
+        prod = (await c.call_tool("demo_create_item", {"name": "x", "instance": "prod"})).structured_content
+        assert prod["status"] == "blocked" and "instance 'prod' is read-only" in prod["blockers"][0]
+        assert prod["policy"]["instance_rules"] == {"read_only": True}
+        status = (await c.call_tool("demo_status", {"instance": "prod"})).structured_content
+        assert status["server"]["instance_rules"] == {"read_only": True}
+        assert "instance_rules" not in (await c.call_tool("demo_status", {})).structured_content["server"]
+
+    monkeypatch.setenv("DEMO_PROD_READ_ONLY", "false")
+    monkeypatch.setenv("DEMO_PROD_TWO_PERSON", "true")
+    monkeypatch.setenv("DEMO_PROD_MAX_BLAST_RADIUS", "2")
+    server = multi(mcp_enable_writes=True, mcp_enable_dangerous=True)
+    async with Client(server) as c:
+        wipe = (await c.call_tool("demo_wipe", {"instance": "prod"})).structured_content
+        assert wipe["status"] == "blocked" and "limit of 2" in wipe["blockers"][0]  # demo_wipe: radius 3
+        with as_caller("alice"):
+            prev = (
+                await c.call_tool("demo_create_item", {"name": "x", "instance": "prod"})
+            ).structured_content
+            assert prev["policy"]["instance_rules"]["two_person"] is True
+            with pytest.raises(ToolError, match="two-person"):
+                await c.call_tool(
+                    "demo_create_item", {"name": "x", "instance": "prod", "confirm": prev["confirm"]}
+                )
+        with as_caller("bob"):
+            done = (
+                await c.call_tool(
+                    "demo_create_item", {"name": "x", "instance": "prod", "confirm": prev["confirm"]}
+                )
+            ).structured_content
+        assert done["status"] == "applied" and done["approved_by"] == "bob"
+
+
+def test_instance_rules_not_inherited(two: Any) -> None:
+    from stutters_mcp_core.targets import target_settings
+
+    base = make_settings(instances="prod", read_only=True, two_person=True)
+    prod = target_settings(base, "prod")
+    assert prod.read_only is False and prod.two_person is False
+    with pytest.raises(ValueError, match="windows look like"):
+        make_settings(change_window="whenever")
