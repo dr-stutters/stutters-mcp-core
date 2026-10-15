@@ -195,3 +195,13 @@ async def test_cli_check_and_token(
     run_cli(SPEC, type(make_settings()), create_server, argv=["token", "alice"])
     out = capsys.readouterr().out
     assert "alice:sha256:" in out
+
+
+async def test_get_definition_examples_flag(api: Any) -> None:
+    server = create_server(make_settings(mcp_cache_dir=""))
+    async with Client(server) as c:
+        tool = next(t for t in await c.list_tools() if t.name == "demo_get_definition")
+    assert "examples" in tool.input_schema["properties"]
+    text = await call_tool(server, "demo_get_definition", {"name": "POST /api/items", "examples": True})
+    d = json.loads(text) if isinstance(text, str) else text
+    assert d["operations"][0]["examples"] == "none in the spec"
