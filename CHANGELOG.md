@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Public-release groundwork (G9)**: `SECURITY.md`, `CONTRIBUTING.md`, `docs/PUBLIC-RELEASE.md` (history-scrub
+  decisions, repo hygiene, PyPI trusted-publishing steps, visibility last) and `python -m stutters_mcp_core.scrub_check`
+  (report-only scan of git history or the current tree for lab addresses/host names, secrets, keys, tokens and
+  forbidden files; `--strict` for CI, `--allow` for known-safe values, `--json`).
+
 ## [0.9.0] - 2026-10-15
 
 ### Added
