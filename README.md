@@ -9,7 +9,7 @@ Shared [FastMCP](https://gofastmcp.com) foundation for a family of network-platf
 | [catc-mcp-server](https://github.com/dr-stutters/catc-mcp-server) | Cisco Catalyst Center |
 | [fmc-mcp-server](https://github.com/dr-stutters/fmc-mcp-server) | Cisco Secure Firewall Management Center |
 
-> Status: 0.11.0 (see [CHANGELOG.md](CHANGELOG.md)). See [docs/BUILDING-A-SERVER.md](docs/BUILDING-A-SERVER.md) to
+> Status: 0.12.0 (see [CHANGELOG.md](CHANGELOG.md)). See [docs/BUILDING-A-SERVER.md](docs/BUILDING-A-SERVER.md) to
 > build a server, [docs/PRODUCTION.md](docs/PRODUCTION.md) for the operator controls, and [ROADMAP.md](ROADMAP.md).
 
 ## What lives here
@@ -33,7 +33,7 @@ per-instance write rules, per-caller rate limits, audit-log rotation and MCP bac
 dependencies = ["stutters-mcp-core"]
 
 [tool.uv.sources]
-stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.11.0" }
+stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.12.0" }
 ```
 
 CI for a server:
