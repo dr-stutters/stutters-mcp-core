@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-15
+
+### Added
+- `<prefix>_get_definition(..., examples=True)` returns the spec's request/response examples and the full
+  operation and parameter descriptions (normally cut to one short line). Requested by fmc-mcp-server: FMC's
+  real minimum payloads and filter syntax only appear there. Spec index format 3 (caches rebuild automatically).
+
 ## [0.3.0] - 2026-10-15
 
 ### Removed
