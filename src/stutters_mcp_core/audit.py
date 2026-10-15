@@ -31,10 +31,20 @@ def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
         if is_secret_key(k) and v not in (None, ""):
             out[k] = MASK
             continue
-        v = mask_secrets(v)
+        v = _scrub_leaves(mask_secrets(v))
         text = json.dumps(v, default=str)
         out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
     return out
+
+
+def _scrub_leaves(v: Any) -> Any:
+    if isinstance(v, str):
+        return scrub_text(v)
+    if isinstance(v, dict):
+        return {k: _scrub_leaves(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_scrub_leaves(x) for x in v]
+    return v
 
 
 class AuditMiddleware(Middleware):

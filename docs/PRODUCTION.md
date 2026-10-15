@@ -141,14 +141,17 @@ class OnePasswordLoader:
         return done.stdout.rstrip("\n")
 ```
 
+`MCP_SECRET_LOADERS` is trusted configuration (it imports code): only name modules installed in the image.
 Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loaders:OnePasswordLoader"`.
 
 **What keeps secrets out of logs and status** (checked by `tests/unit/test_secrets.py`):
 - Settings use `SecretStr`; validation errors never echo input values (`hide_input_in_errors`).
-- At startup the CLI installs a log filter on every handler (root and audit) that masks the configured
-  secret values (every `SecretStr` setting and raw `MCP_AUTH_TOKENS` entries) and credential shapes
-  (`user:pass@` in URLs, `?token=` / `password=` / `apikey=` parameters, `Bearer` / `Basic` values),
-  including in tracebacks.
+- At startup the CLI wraps the log record factory, so every record from every logger (FastMCP's and
+  uvicorn's included) masks the configured secret values (every `SecretStr` setting, the Basic-auth base64,
+  raw `MCP_AUTH_TOKENS` entries, values passed to `register_secret`) as whole words, and credential shapes
+  (`user:pass@` in URLs, whole-word secret keys such as `password=` / `?token=` / `"secret": "..."`,
+  Authorization / Cookie / `X-*-Token` headers, `Bearer <credential>`), including tracebacks.
+- Tool errors returned to the MCP client are scrubbed the same way.
 - Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
   shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
 - `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and

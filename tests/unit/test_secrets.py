@@ -31,7 +31,12 @@ RAW_TOKEN = "raw-token-value-abcdefghijklmnop"
         ("GET /api/x?apikey=abc123&x=1 failed", "abc123"),
         ("redirected to /login?token=zzz999;", "zzz999"),
         ("header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc", "eyJhbGciOiJIUzI1NiJ9"),
-        ("Basic YWRtaW46c2VjcmV0cGFzcw==", "YWRtaW46c2VjcmV0cGFzcw"),
+        ("Authorization: Basic YWRtaW46c2VjcmV0cGFzcw==", "YWRtaW46c2VjcmV0cGFzcw"),
+        ("sent X-Auth-Token: abcdef123", "abcdef123"),
+        ("Cookie: APIC-cookie=s3ss10n", "s3ss10n"),
+        ('body {"password": "hunter22", "name": "r1"}', "hunter22"),
+        ("login password=hunter22 rejected", "hunter22"),
+        ("?client_secret=zz11", "zz11"),
     ],
 )
 def test_scrub_text_masks_credential_shapes(text: str, leaked: str) -> None:
@@ -39,9 +44,26 @@ def test_scrub_text_masks_credential_shapes(text: str, leaked: str) -> None:
     assert leaked not in out and MASK in out
 
 
-def test_scrub_text_leaves_normal_text() -> None:
-    text = "GET /api/items?name=r1&limit=5 returned 404 (token count: 3)"
+@pytest.mark.parametrize(
+    "text",
+    [
+        "GET /api/items?name=r1&limit=5 returned 404 (token count: 3)",
+        "Basic authentication failed for user admin",
+        "Basic configuration is applied",
+        "Token management-service unavailable",
+        "?author=bob&sig_count=1&authority=x&authenticated=true&design=a&assignment=b&signal=c",
+        'detail {"key": "name", "passwordPolicy": "", "authType": "radius"}',
+        "Bearer token missing",
+    ],
+)
+def test_scrub_text_leaves_normal_text(text: str) -> None:
     assert scrub_text(text) == text
+
+
+def test_weak_values_only_masked_as_whole_words() -> None:
+    from stutters_mcp_core.secrets import mask_values
+
+    assert mask_values("user admin is administrator", ["admin"]) == f"user {MASK} is administrator"
 
 
 def test_secret_values_collects_secrets_not_hashes() -> None:
@@ -53,6 +75,43 @@ def test_secret_values_collects_secrets_not_hashes() -> None:
     values = secret_values(s)
     assert PASSWORD in values and "tok-1234567890" in values and RAW_TOKEN in values
     assert not any(v.startswith("sha256:") or v == "a" * 64 for v in values)
+
+
+def test_record_factory_covers_fastmcp_and_uvicorn_loggers(capsys: pytest.CaptureFixture[str]) -> None:
+    import sys
+
+    install_secret_filter(make_settings(password=PASSWORD))
+    for name in ("fastmcp.test", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.propagate = False  # like FastMCP's and uvicorn's own loggers
+        handler = logging.StreamHandler(sys.stderr)  # added after the install
+        lg.addHandler(handler)
+        try:
+            lg.warning('%s - "%s %s HTTP/1.1" %d', "1.2.3.4", "GET", f"/mcp?x={PASSWORD}", 200)
+            try:
+                raise RuntimeError(f"boom {PASSWORD}")
+            except RuntimeError:
+                lg.exception("failed")
+        finally:
+            lg.removeHandler(handler)
+            lg.propagate = True
+    err = capsys.readouterr().err
+    assert "GET" in err and "boom" in err and "Traceback" in err
+    assert PASSWORD not in err
+
+
+async def test_tool_errors_returned_to_client_are_scrubbed() -> None:
+    from fastmcp.exceptions import ToolError
+
+    settings = make_settings(password=PASSWORD)
+    with respx.mock(base_url=BASE, assert_all_called=False) as api:
+        api.post("/api/login").mock(return_value=httpx.Response(200, json={"token": "T"}))
+        api.get("/api/items/1").mock(
+            return_value=httpx.Response(400, json={"message": f"bad credential {PASSWORD}"})
+        )
+        with pytest.raises(ToolError) as exc:
+            await call_tool(create_server(settings), "demo_get_item", {"item_id": "1"})
+    assert "bad credential" in str(exc.value) and PASSWORD not in str(exc.value)
 
 
 def test_filter_masks_values_args_and_tracebacks() -> None:
@@ -68,6 +127,7 @@ def test_filter_masks_values_args_and_tracebacks() -> None:
         rec2 = logging.LogRecord("x", logging.ERROR, __file__, 1, "failed", (), sys.exc_info())
     filt.filter(rec2)
     assert rec2.exc_text is not None and PASSWORD not in rec2.exc_text
+    assert rec2.exc_info is not None  # kept for structured handlers
 
 
 async def test_no_secret_in_logs_or_status(caplog: pytest.LogCaptureFixture) -> None:

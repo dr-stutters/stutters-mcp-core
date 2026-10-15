@@ -99,9 +99,10 @@ class SecretFileSource(PydanticBaseSettingsSource):
             ref = env.get(ref_var) or dotenv.get(ref_var)
             if not path and not ref:
                 continue
-            given = [v for v in (var, file_var, ref_var) if env.get(v) or dotenv.get(v)]
-            if len(given) > 1:
-                raise ValueError(f"set {' or '.join(given)}, not {'both' if len(given) == 2 else 'several'}")
+            conflicts = [v for v in (var, file_var, ref_var) if env.get(v) or dotenv.get(v)]
+            if len(conflicts) > 1:
+                both = "both" if len(conflicts) == 2 else "several"
+                raise ValueError(f"set {' or '.join(conflicts)}, not {both}")
             if path:
                 try:
                     text = Path(path).expanduser().read_text()
@@ -167,7 +168,8 @@ class BaseServerSettings(BaseSettings):
     mcp_blast_radius_overrides: str | None = Field(
         default=None, validation_alias=_alias("MCP_BLAST_RADIUS_OVERRIDES")
     )
-    # "scheme=package.module:Class" entries for <VAR>_REF secret references (read by SecretFileSource)
+    # "scheme=package.module:Class" entries for <VAR>_REF references. SecretFileSource reads the raw variable
+    # (secrets are resolved before this model exists); the field documents it and shows in the model.
     mcp_secret_loaders: str | None = Field(default=None, validation_alias=_alias("MCP_SECRET_LOADERS"))
     mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
 
@@ -268,7 +270,8 @@ class BaseServerSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # init > env > <VAR>_FILE > .env > secrets_dir
+        # init > env > <VAR>_FILE / <VAR>_REF > .env > secrets_dir
+        # (a <VAR> together with its _FILE/_REF is an error)
         given = getattr(init_settings, "init_kwargs", {}) or {}
         secret_files = SecretFileSource(settings_cls, getattr(dotenv_settings, "env_file", None), given)
         return init_settings, env_settings, secret_files, dotenv_settings, file_secret_settings

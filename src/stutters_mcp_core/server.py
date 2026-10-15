@@ -38,7 +38,7 @@ from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.roles import RoleMiddleware
-from stutters_mcp_core.secrets import mask_values, scrub_text, scrub_url, secret_values
+from stutters_mcp_core.secrets import SecretErrorMiddleware, scrub_error, scrub_url
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.spec.store import SpecSource, SpecStore
 from stutters_mcp_core.spec.tools import register_spec_tools
@@ -113,7 +113,12 @@ def build_server(
         if status is not None:
             try:
                 info = await status(app)
-                log.info("Connected to %s at %s: %s", spec.product, scrub_url(settings.url), _brief(info))
+                log.info(
+                    "Connected to %s at %s: %s",
+                    spec.product,
+                    scrub_url(settings.url),
+                    _clean(_brief(mask_secrets(info)), settings),
+                )
             except Exception as e:  # noqa: BLE001 - never refuse to start over the status probe
                 # The model can call <prefix>_status to see the problem.
                 log.error("%s startup check failed: %s", spec.product, _clean(str(e), settings))
@@ -150,6 +155,7 @@ def build_server(
         auth=auth,
         middleware=[AuditMiddleware(spec.name, roles)],
     )
+    mcp.add_middleware(SecretErrorMiddleware(settings))
     if roles is not None:
         mcp.add_middleware(RoleMiddleware(roles, mcp))
 
@@ -172,7 +178,7 @@ def build_server(
 
 def _clean(text: str, settings: BaseServerSettings) -> str:
     """Error text for status: credential shapes and the configured secret values masked."""
-    return mask_values(scrub_text(text), secret_values(settings))
+    return scrub_error(text, settings)
 
 
 def _policy_instructions(policy: SafetyPolicy) -> str:

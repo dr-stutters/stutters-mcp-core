@@ -18,9 +18,18 @@ All notable changes to this project are documented here. The format follows
   the product status and the configured secret values in error text; settings validation errors no longer echo
   input values.
 
+- `SecretErrorMiddleware` (installed by `build_server`): tool errors returned to the client are scrubbed the same way.
+- `secrets.register_secret(value)`: mask a value obtained at runtime (session token, cookie) in later logs.
+
 ### Changed
+- Upstream error messages (`detail`, redirect `Location`, connection errors), audit `error` fields and string
+  arguments in audit events pass through `scrub_text` (credential shapes only: whole-word secret keys,
+  Authorization/Cookie/X-*-Token headers, URL userinfo, `Bearer <credential>`); normal text is unchanged.
+- `<prefix>_status` masks secret-looking keys in the product status (`mask_secrets`) and hides URL userinfo.
+- Settings validation errors no longer include input values (`hide_input_in_errors`); tests matching on the
+  echoed input need updating.
 - Setting a secret both as `<VAR>` and `<VAR>_FILE`/`<VAR>_REF` reports "set A or B, not both" (unchanged for
-  the existing pair).
+  the existing pair). `MCP_AUTH_TOKENS` keeps `MCP_AUTH_TOKENS_FILE` (no `_REF`).
 
 ## [0.6.0] - 2026-10-15
 
