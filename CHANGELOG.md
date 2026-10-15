@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-15
+
+### Added
+- **Prompt test kit (C9).** `<server> tools [--json] [--out FILE] [--tier read|write|dangerous]` lists a
+  server's tools and prompts; `--json` writes a manifest (`stutters_mcp_core.manifest`, format 1: tools with
+  tiers, prompts with `uses`, arguments and the tool names they reference). Built without the lifespan, so
+  no appliance connection and no credentials are needed (placeholder URL when none is configured).
+- `testing.load_tool_manifest(path)`, `load_tool_manifests(*files_or_dirs)` (→ `{prefix: names}`),
+  `read_tool_manifests`, and `prompt_contract_problems` / `assert_prompt_contract(external_tools=...)`:
+  references to another server's tools are checked against its manifest (or a hand-written list), so
+  cross-product prompts such as `ise_quarantine_host` → `fmc_contain_host` are verified in CI without
+  running servers.
+- `testing.inbound_reference_problems` / `assert_inbound_references`: the reverse check, so a server
+  learns when it renames or drops a tool another server's prompt uses.
+- `testing.render_prompts`, `prompt_snapshot_problems` / `assert_prompt_snapshots`: every prompt rendered
+  to `<dir>/<prompt>.md` and compared with a diff; `UPDATE_PROMPT_SNAPSHOTS=1` accepts changes.
+- `reg.prompt(example={...})`: valid string arguments the kit and the manifest render a prompt with
+  when a test passes no `samples`.
+- **`<VAR>_FILE` for secret settings (G4, partial).** Every `SecretStr` setting (`<P>_PASSWORD`,
+  `<P>_TOKEN`, and server-specific ones) can be read from a file, e.g. `ISE_PASSWORD_FILE=/run/secrets/ise`
+  (Docker/Kubernetes secrets). Setting both the variable and its `_FILE` is an error.
+
+### Changed
+- Prompt placeholder arguments handle `Optional[...]`, defaults and numeric minimums (an `int | None`
+  argument used to get `"example"` and fail to render).
+- The CLI reports configuration problems from `_FILE` secrets the same way as validation errors.
+
+All additions; the 0.3.1 APIs are unchanged (the four servers' unit suites pass unmodified against 0.4.0).
+
 ## [0.3.1] - 2026-10-15
 
 ### Added

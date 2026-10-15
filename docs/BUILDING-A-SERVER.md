@@ -83,6 +83,12 @@ _RATE_LIMIT, _MAX_CONCURRENCY` plus `MCP_TRANSPORT/HOST/PORT/PATH/AUTH_TOKENS(_F
 `MCP_ENABLE_WRITES`, `MCP_ENABLE_DANGEROUS`, `MCP_CONFIRM_TTL`, `MCP_CACHE_DIR`,
 `MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`.
 
+Every secret setting (any `SecretStr` field, yours too) can also come from a file: `<VAR>_FILE`, e.g.
+`ISE_PASSWORD_FILE=/run/secrets/ise_password` (Docker/Kubernetes secrets; one trailing newline is
+stripped). Setting both `<VAR>` and `<VAR>_FILE` is a configuration error. `MCP_AUTH_TOKENS_FILE` keeps
+its own semantics (appended to `MCP_AUTH_TOKENS`). Values passed to the constructor win and skip the file.
+If your Settings overrides `settings_customise_sources`, call `super()` or `_FILE` support is lost.
+
 ## 4. client.py: the "app" object
 
 ```python
@@ -191,10 +197,46 @@ Every write step stays preview-first: show the preview and wait for approval."""
 - Write tool names with `tool_ref("...")` (renders them in backticks). `tools=[...]` may also declare them.
 - A workflow that needs write tools takes `tier=Tier.WRITE` (or `Tier.DANGEROUS`): it is hidden when that
   tier is off, like the tools it calls.
+- `example={"mac": "AA:BB:CC:DD:EE:FF"}` registers valid string arguments. The test kit and
+  `<server> tools --json` render the prompt with them when no `samples` are passed (placeholders like
+  `"example"` fail argument validation).
 - Test it with `assert_prompt_contract(server, "ise", samples={...}, known_prefixes={"cml","ise","fmc","catc"})`
   (all tiers on). It renders every prompt and fails on unknown local tools, foreign tools whose server is
-  not in `uses`, missing argument docs, and bad names or descriptions. Checking the *other* servers' tool
-  names is the prompt test kit (C9, Next).
+  not in `uses`, missing argument docs, and bad names or descriptions.
+
+### Prompt test kit (cross-server references and snapshots, core 0.4.0)
+
+Each server exports a static manifest of its tools and prompts. No appliance or running server is needed:
+the CLI uses a placeholder URL when none is configured and turns all tiers on.
+
+```bash
+uv run ise-mcp-server tools                 # human-readable list
+uv run ise-mcp-server tools --json --out tests/manifests/ise.json
+```
+
+Commit the *other* servers' manifests under `tests/manifests/` (copy them from their repos or regenerate
+them from a checkout), then:
+
+```python
+from stutters_mcp_core.testing import (assert_inbound_references, assert_prompt_contract,
+                                       assert_prompt_snapshots, load_tool_manifests)
+
+async def test_prompts_against_other_servers():     # cross-product tool names exist on those servers
+    await assert_prompt_contract(server_rw, "ise", samples=SAMPLES,
+                                 external_tools=load_tool_manifests("tests/manifests"))
+
+async def test_other_servers_prompts_still_resolve():  # nobody references a tool we removed/renamed
+    await assert_inbound_references(server_rw, "ise", "tests/manifests")
+
+async def test_prompt_snapshots():                   # rendered text, title, description, arguments
+    await assert_prompt_snapshots(server_rw, "tests/snapshots/prompts", samples=SAMPLES)
+```
+
+Snapshots live in `<dir>/<prompt>.md`. A missing one is written (even in CI) and the test fails until it is committed;
+a changed one fails with a unified diff. `UPDATE_PROMPT_SNAPSHOTS=1 uv run pytest` accepts changes and
+deletes snapshots for removed prompts. Use one directory per configuration (e.g. `prompts-ro`,
+`prompts-rw`) when the text depends on the enabled tiers. `external_tools` also accepts a hand-written
+`{"fmc": ["fmc_contain_host", ...]}` mapping, e.g. for a tool another builder has promised but not shipped.
 
 **Logs and events:** servers are pull-only (ADR-003). Expose a platform's logs and events as ordinary read
 tools that query the platform when called; don't add listeners, background pollers or buffers.
@@ -241,6 +283,8 @@ async def test_contract():                       # run with writes+dangerous on 
 - Unit tests mock HTTP with `respx` and call tools through `call_tool` or `fastmcp.Client`.
 - Live tests use `live_settings(Settings, "ISE_")`, which reads `.env` and skips when the lab is unreachable.
 - Live write tests create and delete objects named `mcp-test-*`.
+- Prompts: also the prompt test kit (§5a): `external_tools=load_tool_manifests(...)`,
+  `assert_inbound_references` and `assert_prompt_snapshots`.
 
 ## 8. Docker / cortex
 
