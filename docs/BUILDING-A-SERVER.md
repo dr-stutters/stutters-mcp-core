@@ -168,6 +168,8 @@ Rules (enforced by `assert_tool_contract`):
 - When a write can count what it touches (devices deployed to, endpoints, rules), set
   `Plan(blast_radius=N)`; operators can cap it (`MCP_MAX_BLAST_RADIUS`, see [PRODUCTION.md](PRODUCTION.md)).
   Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
+- Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
+  module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
 - Long jobs: `poll_until(...)` with `ctx=ctx`. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
 
 ## 5a. Prompts (cross-product workflows)
