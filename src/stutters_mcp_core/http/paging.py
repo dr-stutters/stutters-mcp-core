@@ -5,7 +5,10 @@
     PageNumber(items="SearchResult.resources", total="SearchResult.total")  # ISE ERS
     NoPaging(items=None)                                                    # CML (full collections)
 
-Tools always speak 0-based `offset` + `limit`; pagers translate.
+Tools always speak 0-based `offset` + `limit`; pagers translate. One pager can serve endpoints with
+different page-size caps: pass `max_page=` per call (e.g. Catalyst Center issues cap at 25, events at 20):
+
+    page = await app.pager.fetch_page(app.api, "/dna/data/api/v1/assuranceIssues", limit=50, max_page=25)
 """
 
 from __future__ import annotations
@@ -74,6 +77,7 @@ class Pager(Protocol):
         *,
         limit: int,
         offset: int = 0,
+        max_page: int | None = None,
     ) -> Page: ...
 
 
@@ -81,6 +85,15 @@ def _as_list(v: Any) -> list[Any]:
     if v is None:
         return []
     return v if isinstance(v, list) else [v]
+
+
+def _page_cap(override: int | None, default: int) -> int:
+    """The per-request page size: `max_page=` from the call (an endpoint's own cap) or the pager's."""
+    if override is None:
+        return default
+    if override < 1:
+        raise ValueError("max_page must be at least 1")
+    return override
 
 
 def _as_int(v: Any) -> int | None:
@@ -107,12 +120,14 @@ class OffsetLimit:
         *,
         limit: int,
         offset: int = 0,
+        max_page: int | None = None,
     ) -> Page:
         out: list[Any] = []
         total: int | None = None
         query = dict(params or {})
+        cap = _page_cap(max_page, self.max_page)
         while len(out) < limit:
-            want = min(self.max_page, limit - len(out))
+            want = min(cap, limit - len(out))
             query[self.offset_param] = offset + len(out) + (1 if self.one_based else 0)
             query[self.limit_param] = want
             data = await client.get(path, query)
@@ -143,8 +158,9 @@ class PageNumber:
         *,
         limit: int,
         offset: int = 0,
+        max_page: int | None = None,
     ) -> Page:
-        size = self.max_size
+        size = _page_cap(max_page, self.max_size)
         page = offset // size
         skip = offset % size
         out: list[Any] = []
@@ -181,7 +197,9 @@ class NoPaging:
         *,
         limit: int,
         offset: int = 0,
+        max_page: int | None = None,
     ) -> Page:
+        _page_cap(max_page, 1)  # validated like the other pagers; the API returns everything anyway
         data = await client.get(path, params)
         everything = _as_list(dig(data, self.items))
         return Page(everything[offset : offset + limit], offset, len(everything))
@@ -193,12 +211,21 @@ def page_of(items: list[Any], *, limit: int, offset: int = 0) -> Page:
 
 
 async def fetch_all(
-    pager: Pager, client: ApiClient, path: str, params: dict[str, Any] | None = None, *, cap: int = 10_000
+    pager: Pager,
+    client: ApiClient,
+    path: str,
+    params: dict[str, Any] | None = None,
+    *,
+    cap: int = 10_000,
+    max_page: int | None = None,
 ) -> Page:
     """Every item (up to `cap`), for tools that aggregate or search a whole collection. Check
     `page.complete`: when False the collection was larger than `cap` and results are partial; say
     so in the tool output."""
-    page = await pager.fetch_page(client, path, params, limit=cap, offset=0)
+    if max_page is None:
+        page = await pager.fetch_page(client, path, params, limit=cap, offset=0)
+    else:
+        page = await pager.fetch_page(client, path, params, limit=cap, offset=0, max_page=max_page)
     if not page.complete:
         log.warning("fetch_all(%s) hit the %d-item cap; results are partial", path, cap)
     return page
