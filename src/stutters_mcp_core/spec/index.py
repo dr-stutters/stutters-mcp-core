@@ -14,7 +14,7 @@ from typing import Any
 
 from stutters_mcp_core.errors import InvalidRequest
 
-INDEX_FORMAT = 3
+INDEX_FORMAT = 4
 EXAMPLE_CHARS = 3000  # per example, serialised
 DETAIL_CHARS = 2000  # full descriptions
 METHODS = ("get", "post", "put", "patch", "delete")
@@ -395,7 +395,7 @@ def build_index(spec: dict[str, Any], *, source: str = "default", path_prefix: s
                 Operation(
                     source=source,
                     method=method.upper(),
-                    path=base + path,
+                    path=re.sub(r"/{2,}", "/", base + path),  # some vendor specs have '//dna/...'
                     operation_id=str(op.get("operationId", "")),
                     summary=str(op.get("summary") or op.get("description") or "")
                     .strip()
