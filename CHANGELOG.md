@@ -27,7 +27,9 @@ All notable changes to this project are documented here. The format follows
   `<pkg>._core` (code, tests, `mock.patch` targets); `python scripts/bundle_core.py vendor && uv lock`; mypy:
   `ignore_errors` for `<pkg>._core.*`; CI: `with: {bundle-core: true}` plus a `bundle-core.yml` job; release:
   `bundle-core: true`; Dockerfile and compose from the templates (no token). A test asserting
-  `importlib.metadata.version("stutters-mcp-core")` should read `<pkg>._core.__version__` instead.
+  `importlib.metadata.version("stutters-mcp-core")` should read `<pkg>._core.__version__` instead. Optionally
+  wrap the package's first `<pkg>._core` import so a missing bundle explains itself. Installs from a git URL stop
+  working (no `_core` in a checkout): point users at the release wheel.
 
 ## [0.12.4] - 2026-10-15
 

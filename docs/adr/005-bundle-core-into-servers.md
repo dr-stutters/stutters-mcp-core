@@ -65,8 +65,13 @@ Option 3, with server code importing `<pkg>._core` directly.
   their own core. `CORE_READ_TOKEN` is gone from every Dockerfile, compose file and workflow.
 - A core fix reaches a server only through a new server release (bump the pin with
   `bundle_core.py update --tag vX`, `uv lock`, release), which was already true with git pins.
-- A fresh clone needs one extra step (`vendor`) before tests run; the README and CONTRIBUTING say so, and an
-  import error in `<pkg>._core` points at it.
+- A fresh clone needs one extra step (`vendor`) before tests run; the README says so, and the server's
+  `__init__` turns the missing `<pkg>._core` into an error that says what to do.
+- **Installing straight from git (`uvx --from git+https://...`, `pip install git+...`) no longer works**: a git
+  checkout has no `_core`, and uv_build can't run the vendor step. Install from the wheel attached to each GitHub
+  release (`uvx --from https://github.com/<owner>/<repo>/releases/download/vX/<wheel> <server>`), the image, or
+  PyPI once published (Wave 4 Phase A). This is the price of not committing the copy; if git installs matter
+  more than a readable repo, option 2 (commit the copy, keep `check` as the guard) is the fallback.
 - Server diffs on a core bump are the pin, the dependency block and `uv.lock`; the generated copy never shows up.
 - Core itself stays an installable package (its own tests, and any server not yet bundled, still use it).
   Publishing core to PyPI becomes optional.
