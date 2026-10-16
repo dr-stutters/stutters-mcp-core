@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,18 @@ def git(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def set_version(text: str, version: str) -> str:
+    return re.sub(r'^version = "[^"]*"', f'version = "{version}"', text, count=1, flags=re.MULTILINE)
+
+
+def release(core: Path, version: str) -> None:
+    """Commit a new core version and tag it v<version>."""
+    pyproject = core / "pyproject.toml"
+    pyproject.write_text(set_version(pyproject.read_text(), version))
+    git(core, "commit", "-q", "-am", version)
+    git(core, "tag", f"v{version}")
+
+
 @pytest.fixture
 def core(tmp_path: Path) -> Path:
     """A throwaway core repo: this checkout's package, pyproject, LICENSE and script, tagged v9.9.9."""
@@ -54,7 +67,7 @@ def core(tmp_path: Path) -> Path:
         repo / "src" / "stutters_mcp_core",
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    shutil.copy(ROOT / "pyproject.toml", repo / "pyproject.toml")
+    (repo / "pyproject.toml").write_text(set_version((ROOT / "pyproject.toml").read_text(), "9.9.9"))
     shutil.copy(ROOT / "LICENSE", repo / "LICENSE")
     (repo / "scripts").mkdir()
     shutil.copy(SCRIPT, repo / "scripts" / "bundle_core.py")
@@ -157,10 +170,7 @@ def test_check_fails_when_not_vendored_or_edited(tmp_path: Path, core: Path) -> 
 def test_check_fails_when_the_pin_is_bumped(tmp_path: Path, core: Path) -> None:
     server = make_server(tmp_path, core)
     run(server, core, "vendor")
-    (core / "README.md").write_text("next\n")
-    git(core, "add", "-A")
-    git(core, "commit", "-q", "-m", "next")
-    git(core, "tag", "v9.9.10")
+    release(core, "9.9.10")
     pyproject = server / "pyproject.toml"
     pyproject.write_text(bc.set_pin(pyproject.read_text(), "v9.9.10", git(core, "rev-parse", "v9.9.10")))
     code, out = run(server, core, "check", "--offline")
@@ -187,8 +197,7 @@ def test_moved_tag_is_refused(tmp_path: Path, core: Path) -> None:
 def test_update_moves_the_pin(tmp_path: Path, core: Path) -> None:
     server = make_server(tmp_path, core)
     run(server, core, "vendor")
-    git(core, "commit", "-q", "--allow-empty", "-m", "next")
-    git(core, "tag", "v9.10.0")
+    release(core, "9.10.0")
     code, out = run(server, core, "update", "--tag", "v9.10.0")
     assert code == 0, out
     text = (server / "pyproject.toml").read_text()
@@ -268,3 +277,11 @@ def test_requirement_keys_ignore_spacing_and_quote_style() -> None:
     assert bc._req_key('tomli>=2; python_version < "3.11"') == bc._req_key(
         "tomli >= 2 ; python_version<'3.11'"
     )
+
+
+def test_tag_must_match_the_core_version(tmp_path: Path, core: Path) -> None:
+    server = make_server(tmp_path, core)
+    git(core, "commit", "-q", "--allow-empty", "-m", "forgot the bump")
+    git(core, "tag", "v9.11.0")  # pyproject still says 9.9.9
+    code, out = run(server, core, "update", "--tag", "v9.11.0")
+    assert code == 2 and "tag v9.11.0 holds core version 9.9.9" in out
