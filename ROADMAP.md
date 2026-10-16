@@ -134,3 +134,9 @@ the blocker named.
 | **E. Blocked: Windows client VM** | ise [**I32**](https://github.com/dr-stutters/ise-mcp-server/issues/73) posture (also needs the Secure Client package) · ise [**I33**](https://github.com/dr-stutters/ise-mcp-server/issues/74) machine + user EAP-TLS with GPO auto-enrolment / TEAP chaining · ise [**I34**](https://github.com/dr-stutters/ise-mcp-server/issues/75) PassiveID from AD logins (WMI) → user mappings without 802.1X (also feeds FMC) | when the VM exists |
 
 New prerequisite: **P11, a domain-joinable Windows client VM** in the lab (you'll build it later): unblocks I32–I34.
+
+## Wave 4 (started 2026-10-16): standalone servers
+
+| Item | Scope | Status |
+|---|---|---|
+| core [**C20**](https://github.com/dr-stutters/stutters-mcp-core/issues/63) | Bundle core into each server package (`<pkg>._core`, ADR-005): `scripts/bundle_core.py` + reusable `bundle-core.yml`; no git dependency, no `CORE_READ_TOKEN`. Adopted by ise I35, fmc F35, catc D31, cml L35 | in review |

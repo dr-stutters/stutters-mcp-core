@@ -48,9 +48,10 @@ Then force-push, re-tag, and re-run `scrub_check --strict` until it exits 0.
 - [ ] Enable private vulnerability reporting, Dependabot alerts, secret scanning + push protection.
 - [ ] Branch protection on `main` (CI required, no force-push).
 
-## 3. Core as a normal dependency (PyPI, trusted publishing)
+## 3. PyPI (trusted publishing)
 
-Servers currently pin core by git tag (ADR-001) and CI needs `CORE_READ_TOKEN`. Public release switches to PyPI:
+Servers bundle core into their own package (ADR-005), so they don't need core on PyPI and no
+`CORE_READ_TOKEN` anywhere. Publishing the servers (and, optionally, core for people building new servers):
 
 1. Check the names are free: `stutters-mcp-core`, `cml-mcp-server`, `fmc-mcp-server`, `catc-mcp-server`,
    `ise-mcp-server` (pypi.org/project/<name>). Rename now if any is taken.
@@ -61,8 +62,8 @@ Servers currently pin core by git tag (ADR-001) and CI needs `CORE_READ_TOKEN`. 
 4. In `release.yml`: add `environment: pypi` to the job that publishes and pass `with: { publish-pypi: true }`
    (the reusable workflow already has the `pypa/gh-action-pypi-publish` step and `id-token: write`).
    Test first against TestPyPI (`repository-url: https://test.pypi.org/legacy/`, pending publisher on test.pypi.org).
-5. Switch servers from the git source to a version range: `dependencies = ["stutters-mcp-core>=0.9,<0.10"]`,
-   remove `[tool.uv.sources]`, `CORE_READ_TOKEN` and the Dockerfile's core-token secret.
+5. ~~Switch servers from the git source to a version range~~: superseded by ADR-005 (core is bundled; the
+   git source, `CORE_READ_TOKEN` and the Dockerfile's token secret are gone).
 6. Container images: make the GHCR packages public (*Package settings → Change visibility*), decide on cosign
    signing (docs/SUPPLY-CHAIN.md).
 

@@ -1,6 +1,7 @@
 # ADR-001: Share code through a versioned core package
 
-- Status: accepted
+- Status: accepted; distribution by git tag superseded by [ADR-005](005-bundle-core-into-servers.md) (core is
+  bundled into each server package)
 - Date: 2026-10-14
 
 ## Context

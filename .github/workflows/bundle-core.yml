@@ -1,0 +1,91 @@
+# Reusable: bundle stutters-mcp-core into a server and test the result (ADR-005).
+#   jobs:
+#     bundle:
+#       uses: dr-stutters/stutters-mcp-core/.github/workflows/bundle-core.yml@main
+#
+# The caller pins core in pyproject.toml ([tool.bundle-core] tag + commit) and carries a copy of
+# scripts/bundle_core.py. This job vendors the pinned tag into src/<pkg>/_core, fails on drift (pin vs
+# bundle vs tag, stale dependency block, stale script copy, lock out of date), builds the wheel and
+# sdist, installs the wheel in a clean venv with `pip install --no-index` from a predownloaded
+# wheelhouse, and runs the unit suite against the installed wheel with src/ moved out of the way.
+# The built dist/ is uploaded as the `dist` artifact.
+name: bundle-core
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        default: "3.12"
+      pytest-args:
+        type: string
+        default: ""
+        description: Extra arguments for the suite run against the installed wheel.
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.9"
+          python-version: ${{ inputs.python-version }}
+      - name: Package name
+        id: pkg
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import tomllib
+          d = tomllib.load(open("pyproject.toml", "rb"))
+          t = d.get("tool", {})
+          print("name=" + (t.get("bundle-core", {}).get("package") or t["uv"]["build-backend"]["module-name"]))
+          EOF
+      - name: Vendor the pinned core
+        run: python3 scripts/bundle_core.py vendor
+      - name: Drift check
+        run: |
+          if ! git diff --quiet -- pyproject.toml; then
+            git diff -- pyproject.toml
+            echo "::error file=pyproject.toml::the bundled core dependency block is stale: run 'python scripts/bundle_core.py vendor' and 'uv lock', then commit"
+            exit 1
+          fi
+          python3 scripts/bundle_core.py check
+          uv lock --check
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Check the built artifacts
+        run: python3 scripts/bundle_core.py check --offline --dist dist
+      - name: Install the wheel in a clean venv (pip --no-index)
+        run: |
+          # Runtime + test dependencies at the locked versions, downloaded first; the install itself is offline.
+          uv export --frozen --no-emit-project --no-hashes -q -o "$RUNNER_TEMP/requirements.txt"
+          uv venv -q --seed "$RUNNER_TEMP/download"
+          "$RUNNER_TEMP/download/bin/pip" download -q -r "$RUNNER_TEMP/requirements.txt" -d "$RUNNER_TEMP/wheelhouse"
+          uv venv -q --seed "$RUNNER_TEMP/clean"
+          "$RUNNER_TEMP/clean/bin/pip" install --no-index --find-links "$RUNNER_TEMP/wheelhouse" \
+            dist/*.whl -r "$RUNNER_TEMP/requirements.txt"
+          "$RUNNER_TEMP/clean/bin/pip" check
+      - name: Unit + contract suite against the installed wheel
+        env:
+          PKG: ${{ steps.pkg.outputs.name }}
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
+        run: |
+          mv src "$RUNNER_TEMP/src.moved"   # nothing but the installed wheel can be imported now
+          "$RUNNER_TEMP/clean/bin/python" - <<'EOF'
+          import importlib, os
+          pkg = importlib.import_module(os.environ["PKG"])
+          core = importlib.import_module(os.environ["PKG"] + "._core")
+          assert "site-packages" in pkg.__file__, pkg.__file__
+          print(f"testing {pkg.__file__} with bundled core {core.__version__}")
+          EOF
+          # shellcheck disable=SC2086 - PYTEST_ARGS is a word list on purpose
+          "$RUNNER_TEMP/clean/bin/python" -m pytest -p no:cacheprovider $PYTEST_ARGS
+          mv "$RUNNER_TEMP/src.moved" src
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error

@@ -28,12 +28,28 @@ per-instance write rules, per-caller rate limits, audit-log rotation and MCP bac
 
 ## Using it from a server
 
+Servers bundle core into their own package as `<pkg>._core` ([ADR-005](docs/adr/005-bundle-core-into-servers.md)),
+so a server wheel or image needs nothing else. Copy [`scripts/bundle_core.py`](scripts/bundle_core.py) into the
+server, pin a tag, mark where core's dependencies go, and import `<pkg>._core`:
+
 ```toml
 [project]
-dependencies = ["stutters-mcp-core"]
+dependencies = [
+    # >>> bundled stutters-mcp-core
+    # <<< bundled stutters-mcp-core
+]
 
-[tool.uv.sources]
-stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.12.0" }
+[tool.bundle-core]
+tag = "v0.12.4"
+commit = "70a6bafab04a94df152944acc9f024562fbd7020"   # the tag's commit (git rev-parse v0.12.4^{commit})
+extras = []                                           # e.g. ["tasks"] for MCP background tasks
+```
+
+```bash
+echo "src/<pkg>/_core/" >> .gitignore
+python scripts/bundle_core.py vendor     # after a clone or a pin change; fills the dependency block
+uv lock && uv sync
+python scripts/bundle_core.py update --tag v0.13.0   # later: move the pin
 ```
 
 CI for a server:
@@ -42,13 +58,16 @@ CI for a server:
 jobs:
   ci:
     uses: dr-stutters/stutters-mcp-core/.github/workflows/python-ci.yml@main
-    secrets: inherit   # provides CORE_READ_TOKEN while the repos are private
+    with: {bundle-core: true}
+  bundle:   # drift check, wheel + sdist, suite against the installed wheel (pip --no-index)
+    uses: dr-stutters/stutters-mcp-core/.github/workflows/bundle-core.yml@main
 ```
 
 ## Decisions
 
 - [ADR-001: Shared core package](docs/adr/001-shared-core-package.md)
 - [ADR-002: Write tiers and preview tokens](docs/adr/002-write-tiers-and-preview-tokens.md)
+- [ADR-005: Bundle core into each server package](docs/adr/005-bundle-core-into-servers.md)
 
 ## Development
 
