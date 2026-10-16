@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-16
+
+### Fixed
+- `check`: hints for a named instance name its own variables (`ISE_DR_URL`, not `ISE_URL`).
+
 ## [0.14.0] - 2026-10-16
 
 ### Added
