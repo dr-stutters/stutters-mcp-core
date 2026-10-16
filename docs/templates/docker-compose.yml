@@ -1,14 +1,12 @@
 # Template: replace __SERVER__ (e.g. ise-mcp-server), __PORT__ (host port) and __ENV__ (e.g. ISE).
 #
 #   cp .env.example .env    # set __ENV___URL/USERNAME/PASSWORD and MCP_AUTH_TOKENS (__SERVER__ token <name>)
-#   CORE_READ_TOKEN=... docker compose up -d --build
+#   docker compose up -d --build
 #   (credentials as Docker secrets instead of .env: see docker-compose.secrets.yml)
 services:
   __SERVER__:
     build:
       context: .
-      secrets:
-        - core_read_token
     image: __SERVER__:latest
     container_name: __SERVER__
     restart: unless-stopped
@@ -29,10 +27,6 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-
-secrets:
-  core_read_token:
-    environment: CORE_READ_TOKEN
 
 volumes:
   spec-cache:

@@ -2,7 +2,7 @@
 #   jobs:
 #     ci:
 #       uses: dr-stutters/stutters-mcp-core/.github/workflows/python-ci.yml@main
-#       secrets: inherit
+#       with: {bundle-core: true}   # servers that bundle core (ADR-005); pair with bundle-core.yml
 name: python-ci
 
 on:
@@ -15,14 +15,14 @@ on:
         type: boolean
         default: true
         description: Run pip-audit on the locked runtime dependencies.
+      bundle-core:
+        type: boolean
+        default: false
+        description: Vendor the pinned core into src/<pkg>/_core first (scripts/bundle_core.py, ADR-005).
       audit-ignore:
         type: string
         default: ""
         description: Space-separated vulnerability ids to ignore (e.g. "GHSA-xxxx PYSEC-yyyy"), with a reason in the caller.
-    secrets:
-      CORE_READ_TOKEN:
-        description: Token able to read the private stutters-mcp-core repo (consumers only).
-        required: false
 
 permissions:
   contents: read
@@ -32,15 +32,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Allow git dependencies on private repos
-        env:
-          CORE_READ_TOKEN: ${{ secrets.CORE_READ_TOKEN }}
-        if: env.CORE_READ_TOKEN != ''
-        run: git config --global url."https://x-access-token:${CORE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.9"
           python-version: ${{ inputs.python-version }}
+      - name: Vendor the pinned core
+        if: inputs.bundle-core
+        run: python3 scripts/bundle_core.py vendor
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
@@ -52,8 +50,8 @@ jobs:
         env:
           AUDIT_IGNORE: ${{ inputs.audit-ignore }}
         run: |
-          # Runtime dependencies from uv.lock, with hashes. stutters-mcp-core is a git dependency (no hash);
-          # its own dependencies are still listed and audited, and core's CI audits core.
+          # Runtime dependencies from uv.lock, with hashes. A server that bundles core lists core's
+          # dependencies itself; an older consumer's git dependency on core (no hash) is left out.
           uv export --no-dev --no-emit-project --no-emit-package stutters-mcp-core --frozen -q -o "$RUNNER_TEMP/requirements.txt"
           ignore=()
           for id in $AUDIT_IGNORE; do ignore+=(--ignore-vuln "$id"); done

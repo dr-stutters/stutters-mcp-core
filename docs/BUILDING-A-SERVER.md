@@ -28,15 +28,18 @@ repo is a complete, tested miniature of everything below.
 name = "ise-mcp-server"
 version = "0.1.0"
 requires-python = ">=3.12,<3.15"
-dependencies = ["stutters-mcp-core"]
+dependencies = [
+    # >>> bundled stutters-mcp-core
+    # <<< bundled stutters-mcp-core
+]
 
 [project.scripts]
 ise-mcp-server = "ise_mcp:main"
 
-[tool.uv.sources]
-stutters-mcp-core = { git = "https://github.com/dr-stutters/stutters-mcp-core", tag = "v0.2.0" }
-# while co-developing core locally instead:
-# stutters-mcp-core = { path = "../stutters-mcp-core", editable = true }
+# core is bundled as ise_mcp._core (ADR-005): python scripts/bundle_core.py vendor
+[tool.bundle-core]
+tag = "v0.12.4"
+commit = "70a6bafab04a94df152944acc9f024562fbd7020"
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]
@@ -299,8 +302,9 @@ async def test_contract():                       # run with writes+dangerous on 
 Copy `docs/templates/Dockerfile`, `docs/templates/docker-compose.yml` and `docs/templates/dockerignore`
 (as `.dockerignore`, which keeps `.env` out of the build context), then replace `__SERVER__`
 (e.g. `ise-mcp-server`), `__PORT__` (8032 CML, 8033 ISE, 8034 CatC, 8035 FMC) and `__ENV__` (e.g. `ISE`).
-The image build needs the private core while the repos are private. Pass it as a BuildKit secret:
-`docker build --secret id=core_read_token,env=CORE_READ_TOKEN .`
+Also replace `__PKG__` (e.g. `ise_mcp`) in the Dockerfile. The image is built from the bundled wheel
+(ADR-005) and needs no token: `docker build .` (it clones the pinned core tag itself when the context
+isn't vendored yet).
 
 ## 9. CI
 
@@ -311,7 +315,9 @@ on: {push: {branches: [main]}, pull_request: {}}
 jobs:
   ci:
     uses: dr-stutters/stutters-mcp-core/.github/workflows/python-ci.yml@main
-    secrets: inherit
+    with: {bundle-core: true}
+  bundle:
+    uses: dr-stutters/stutters-mcp-core/.github/workflows/bundle-core.yml@main
 ```
 ```yaml
 # .github/workflows/release.yml
@@ -321,6 +327,6 @@ permissions: {contents: write, packages: write, id-token: write}   # required: c
 jobs:
   release:
     uses: dr-stutters/stutters-mcp-core/.github/workflows/python-release.yml@main
-    with: {image: true}
+    with: {image: true, bundle-core: true}
     secrets: inherit
 ```
