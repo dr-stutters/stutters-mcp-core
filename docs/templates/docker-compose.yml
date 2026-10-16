@@ -1,13 +1,15 @@
 # Template: replace __SERVER__ (e.g. ise-mcp-server), __PORT__ (host port) and __ENV__ (e.g. ISE).
 #
 #   cp .env.example .env    # set __ENV___URL/USERNAME/PASSWORD and MCP_AUTH_TOKENS (__SERVER__ token <name>)
-#   docker compose up -d --build
+#   docker compose up -d    # pulls ghcr.io/dr-stutters/__SERVER__ (MCP_IMAGE_TAG, default latest)
+#   docker compose up -d --build   # or build from this checkout instead (then MCP_PULL_POLICY=build keeps it)
 #   (credentials as Docker secrets instead of .env: see docker-compose.secrets.yml)
 services:
   __SERVER__:
+    image: ghcr.io/dr-stutters/__SERVER__:${MCP_IMAGE_TAG:-latest}
+    pull_policy: ${MCP_PULL_POLICY:-always}
     build:
       context: .
-    image: __SERVER__:latest
     container_name: __SERVER__
     restart: unless-stopped
     env_file: .env

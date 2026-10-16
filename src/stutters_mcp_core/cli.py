@@ -4,9 +4,12 @@
         run_cli(SPEC, Settings, create_server)
 
 Subcommands:
-    serve (default)   run over stdio, or HTTP when MCP_TRANSPORT=http / --transport http
+    serve (default)   run over stdio, or HTTP with `serve --http` / MCP_TRANSPORT=http / --transport http
     token <name>      generate a bearer token + the MCP_AUTH_TOKENS entry for it
-    check             validate config, connect, print <prefix>_status as JSON; exit 1 on failure
+    check             preflight: reachability per surface, TLS trust, credentials, the account's role vs the
+                      enabled tiers, product version vs the tested matrix (stutters_mcp_core.preflight);
+                      --json, --strict, --instance; exit 1 on failure. A server without a preflight
+                      function prints <prefix>_status as JSON instead.
     config [--json]   show the effective configuration and where each value came from (secrets masked)
     tools [--json]    list the tools and prompts (all tiers on unless --tier); --json writes the
                       manifest other servers' prompt tests load (no appliance connection needed)
@@ -19,7 +22,7 @@ import asyncio
 import json
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastmcp import FastMCP
@@ -31,6 +34,7 @@ from stutters_mcp_core.server import ServerSpec
 from stutters_mcp_core.settings import BaseServerSettings
 
 CreateServer = Callable[..., FastMCP[Any]]
+PreflightFn = Callable[[Any, Any], Awaitable[None]]  # (settings, preflight.Preflight) -> None
 
 
 def _token_command(prog: str, name: str) -> None:
@@ -76,6 +80,30 @@ async def _check(spec: ServerSpec, server: FastMCP[Any], targets: list[str] | No
             product = data.get(spec.prefix, {}) if isinstance(data, dict) else {}
             failed |= result.is_error or (isinstance(product, dict) and "error" in product)
     return 1 if failed else 0
+
+
+def _preflight_command(
+    spec: ServerSpec, settings: BaseServerSettings, preflight: PreflightFn, args: Any
+) -> int:
+    from stutters_mcp_core import preflight as pre
+
+    try:
+        report = asyncio.run(
+            pre.run_preflight(
+                settings,
+                preflight,
+                server=spec.name,
+                product=spec.product,
+                env_prefix=spec.env_prefix,
+                version=spec.version or _server_version(spec.name),
+                instances=args.instance,
+            )
+        )
+    except ValueError as e:  # an unknown --instance, or a named instance with invalid settings
+        print(f"{spec.name}: {scrub_text(str(e))}", file=sys.stderr)
+        return 2
+    sys.stdout.write(pre.dumps(report) if args.json else pre.render_text(report))
+    return pre.exit_code(report, strict=args.strict)
 
 
 _PLACEHOLDER_URL = "https://manifest.invalid"
@@ -144,15 +172,29 @@ def run_cli(
     create_server: CreateServer,
     *,
     argv: list[str] | None = None,
+    preflight: PreflightFn | None = None,
 ) -> None:
+    """`preflight`: the server's `async (settings, Preflight) -> None` for `check` (core preflight module)."""
     prog = spec.name
     parser = argparse.ArgumentParser(prog=prog, description=f"MCP server for {spec.product}")
     parser.add_argument("--transport", choices=["stdio", "http"], help="overrides MCP_TRANSPORT")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("serve", help="run the server (default)")
+    serve = sub.add_parser("serve", help="run the server (default: stdio)")
+    mode = serve.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--http", dest="serve_transport", action="store_const", const="http", help="serve over HTTP"
+    )
+    mode.add_argument(
+        "--stdio", dest="serve_transport", action="store_const", const="stdio", help="serve over stdio"
+    )
     tok = sub.add_parser("token", help="generate a bearer token for the HTTP transport")
     tok.add_argument("name", help="who the token is for, e.g. alice")
-    sub.add_parser("check", help="connect to the appliance and print status")
+    chk = sub.add_parser("check", help="preflight: connect to the appliance and check access (no MCP client)")
+    chk.add_argument("--json", action="store_true", help="print the report as JSON")
+    chk.add_argument("--strict", action="store_true", help="exit 1 on warnings too")
+    chk.add_argument(
+        "--instance", action="append", metavar="NAME", help="only this instance (repeatable; default: all)"
+    )
     cfg = sub.add_parser(
         "config", help="show the effective configuration (secrets masked; no appliance needed)"
     )
@@ -200,10 +242,12 @@ def run_cli(
     log = logging.getLogger(spec.name)
 
     if args.command == "check":
-        names = settings.target_names()
-        sys.exit(asyncio.run(_check(spec, create_server(settings), names if len(names) > 1 else None)))
+        if preflight is None:
+            names = settings.target_names()
+            sys.exit(asyncio.run(_check(spec, create_server(settings), names if len(names) > 1 else None)))
+        sys.exit(_preflight_command(spec, settings, preflight, args))
 
-    transport = args.transport or settings.mcp_transport
+    transport = getattr(args, "serve_transport", None) or args.transport or settings.mcp_transport
     if transport == "stdio":
         create_server(settings).run(transport="stdio", show_banner=False)
         return
