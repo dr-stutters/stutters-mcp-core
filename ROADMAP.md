@@ -103,6 +103,7 @@ Compiled from the four server roadmaps (2026-10-15). Items in **Now** need none 
 | P8 | **Quick lab toggles**: SXP service on ISE | ISE UI/API (lab) | ise I9 |
 | P9 | **Larger environments**: multi-node ISE (PAN/MnT/PSN) | dCloud lab | ise I19 (gate) |
 | P10 | **One-offs**: physical AP (catc D14), ServiceNow instance (catc D16), SCC tenant for cdFMC (fmc F15), a Windows client with Secure Client for posture (ise I14), a self-hosted GitHub runner on cortex (cml L12) | Various | One item each |
+| P11 | **Domain-joinable Windows client VM** in the lab (the user will build it) | User | ise I32 posture, I33 machine+user EAP-TLS, I34 PassiveID |
 
 Time-limited: the FMC Smart Licensing evaluation expires ≈2027-01-12; the ISE evaluation licence (Advantage, needed for pxGrid) also expires.
 
@@ -117,3 +118,19 @@ Time-limited: the FMC Smart Licensing evaluation expires ≈2027-01-12; the ISE 
 | Windows AD + CA | ISE AD identity, EAP-TLS, pxGrid certs | Existing Windows lab server (`Windows_Server` MCP) | ISE ↔ AD | ⏳ when needed |
 | IdP (OAuth) | G1 | GitHub / customer IdP | Internet | Production gate |
 | Public HTTPS ingress (Caddy/VPS or tunnel) | Claude Desktop connectors | VPS / tunnel provider | Internet → server | Production gate (optional) |
+
+## Wave 3 (planned 2026-10-16)
+
+Driven by the real AD + CA (`mitchcloud.lab`, `mitchcloud-CA`, DC01 198.18.130.11). Scope: the four servers + core, plus a new
+**Windows server**. NetBox stays out. Every item is a GitHub issue labelled `wave-3`; blocked items sit in **Later** with
+the blocker named.
+
+| Theme | Items | Order |
+|---|---|---|
+| **A. User-based firewall, end to end** | cml [**L34**](https://github.com/dr-stutters/cml-mcp-server/issues/81) `ise-fmc-identity` recipe · ise [**I30**](https://github.com/dr-stutters/ise-mcp-server/issues/71) pxGrid client management + certs for FMC · fmc [**F34**](https://github.com/dr-stutters/fmc-mcp-server/issues/79) ISE as identity source (pxGrid) + on-demand user↔IP lookup; prove `mcp-bob` blocked / `mcp-alice` allowed *by user name* on real traffic | 1st, in parallel with B |
+| **B. Windows server on the core** | core [**C18**](https://github.com/dr-stutters/stutters-mcp-core/issues/61) → new repo `win-mcp-server` (W1–W7: AD read, AD writes, DNS/DHCP, CA, least privilege + safety rails, DC build as a tool, quality pass; deploy on cortex :8036; replaces the old `Windows_Server` MCP and the ad-hoc WinRM scripts) | 1st, in parallel with A |
+| **C. ISE guest + sponsor** | ise [**I31**](https://github.com/dr-stutters/ise-mcp-server/issues/72) guest types, sponsor groups on AD (`mcp-netadmins` as sponsors), sponsor + guest portals, guest accounts; a real portal flow from CML's `firefox` node | 2nd (after I30, same appliance) |
+| **D. Cross-product workflow pass** | core [**C19**](https://github.com/dr-stutters/stutters-mcp-core/issues/62): run every cross-server prompt live end to end and fix what breaks; add `win_onboard_employee`, `win_offboard_user` (AD disable → ISE disconnect → FMC contain), `fmc_prove_user_policy` | 3rd (needs A + B) |
+| **E. Blocked: Windows client VM** | ise [**I32**](https://github.com/dr-stutters/ise-mcp-server/issues/73) posture (also needs the Secure Client package) · ise [**I33**](https://github.com/dr-stutters/ise-mcp-server/issues/74) machine + user EAP-TLS with GPO auto-enrolment / TEAP chaining · ise [**I34**](https://github.com/dr-stutters/ise-mcp-server/issues/75) PassiveID from AD logins (WMI) → user mappings without 802.1X (also feeds FMC) | when the VM exists |
+
+New prerequisite: **P11, a domain-joinable Windows client VM** in the lab (you'll build it later): unblocks I32–I34.
