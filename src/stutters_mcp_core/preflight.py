@@ -411,8 +411,10 @@ async def run_preflight(
     reports = []
     for name in selected:
         cfg = settings if name == names[0] else target_settings(settings, name)
+        # Hints name the instance's own variables (ISE_DR_URL for instance "dr").
+        prefix = env_prefix if name == names[0] else f"{env_prefix}{name.upper()}_"
         pf = await run_instance(
-            cfg, preflight, product=product, env_prefix=env_prefix, instance=name if multi else None
+            cfg, preflight, product=product, env_prefix=prefix, instance=name if multi else None
         )
         reports.append(pf.report())
     return {
