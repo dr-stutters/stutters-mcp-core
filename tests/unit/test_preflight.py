@@ -201,6 +201,7 @@ async def test_multi_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     assert report["instances"][0]["ok"] and not report["instances"][1]["ok"] and not report["ok"]
     text = render_text(report)
     assert "instance prod: https://prod.test" in text and "FAILED: 1 failed" in text
+    assert "DEMO_PROD_URL" in _by_check(report, 1)["reachability"][0]["hint"]
     only = await _run(settings, instances=["default"])
     assert only["ok"] and len(only["instances"]) == 1
     with pytest.raises(ValueError, match="unknown instance"):
