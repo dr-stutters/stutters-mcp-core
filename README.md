@@ -49,7 +49,7 @@ extras = []                                           # e.g. ["tasks"] for MCP b
 echo "src/<pkg>/_core/" >> .gitignore
 python scripts/bundle_core.py vendor     # after a clone or a pin change; fills the dependency block
 uv lock && uv sync
-python scripts/bundle_core.py update --tag v0.13.0   # later: move the pin
+python scripts/bundle_core.py update --tag v0.14.0   # later: move the pin
 ```
 
 CI for a server:

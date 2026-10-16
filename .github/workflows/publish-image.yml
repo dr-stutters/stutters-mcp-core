@@ -1,0 +1,224 @@
+# Reusable: build a server's container image from the bundled wheel (ADR-005) for linux/amd64 and
+# linux/arm64, push it to ghcr.io/<owner>/<repo>, sign it with cosign (keyless, GitHub OIDC) and attach an
+# SBOM, both as a signed attestation on the image and as a release asset (C22).
+#
+#   # .github/workflows/release.yml
+#   on: {push: {tags: ["v*"]}}
+#   permissions: {contents: write, packages: write, id-token: write}
+#   jobs:
+#     release:
+#       uses: dr-stutters/stutters-mcp-core/.github/workflows/python-release.yml@main
+#       with: {bundle-core: true}
+#     image:
+#       needs: release   # the GitHub release exists, so the SBOM can be attached to it
+#       uses: dr-stutters/stutters-mcp-core/.github/workflows/publish-image.yml@main
+#
+# Tags, from the git tag:
+#   v1.2.0       -> :1.2.0  :v1.2.0  :latest
+#   v1.2.0-rc1   -> :1.2.0-rc1  :v1.2.0-rc1  :rc      (any tag with a "-" is a pre-release; never :latest)
+# The pushed image is smoke-tested on both architectures (`<server> --help` and `<server> tools`), scanned
+# with Trivy (report only unless scan-fail), and verified with `cosign verify` before the job ends.
+name: publish-image
+
+on:
+  workflow_call:
+    inputs:
+      command:
+        type: string
+        default: ""
+        description: "The console script in the image (default: the repository name, e.g. ise-mcp-server)."
+      platforms:
+        type: string
+        default: "linux/amd64,linux/arm64"
+      bundle-core:
+        type: boolean
+        default: true
+        description: Vendor the pinned core and check for drift before building (scripts/bundle_core.py).
+      sign:
+        type: boolean
+        default: true
+        description: "cosign keyless signature + SBOM attestation (needs id-token: write from the caller)."
+      scan-severity:
+        type: string
+        default: "CRITICAL,HIGH"
+      scan-fail:
+        type: boolean
+        default: false
+        description: "Fail when Trivy finds fixable vulnerabilities at scan-severity (the image is already pushed)."
+    outputs:
+      image:
+        description: "The image name, e.g. ghcr.io/dr-stutters/ise-mcp-server"
+        value: ${{ jobs.image.outputs.image }}
+      digest:
+        description: "The pushed manifest list digest (sha256:...)"
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image name and tags
+        id: meta
+        env:
+          COMMAND: ${{ inputs.command }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          ref="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF_TYPE" != "tag" || ! "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::publish-image runs on a version tag (v1.2.3 or v1.2.3-rc1), not ${GITHUB_REF_TYPE} ${ref}"
+            exit 1
+          fi
+          version="${ref#v}"
+          tags="${image}:${version},${image}:${ref}"
+          if [[ "$version" == *-* ]]; then
+            tags="${tags},${image}:rc"; prerelease=true
+          else
+            tags="${tags},${image}:latest"; prerelease=false
+          fi
+          {
+            echo "image=${image}"
+            echo "version=${version}"
+            echo "tags=${tags}"
+            echo "prerelease=${prerelease}"
+            echo "command=${COMMAND:-${GITHUB_REPOSITORY#*/}}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Check the tag matches the package version
+        run: |
+          python3 - "${{ steps.meta.outputs.version }}" <<'EOF'
+          import sys, tomllib
+          want = sys.argv[1]
+          have = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          # v1.2.0 needs 1.2.0. A pre-release tag v1.2.0-rc1 accepts 1.2.0rc1 (PEP 440) or 1.2.0, the release
+          # it is a candidate for, so an open PR's head can be tagged -rc without editing the version.
+          base = want.split("-")[0]
+          ok = have == want if "-" not in want else have in (base, want.replace("-", ""))
+          if not ok:
+              sys.exit(f"::error file=pyproject.toml::tag v{want} but [project].version is {have}")
+          EOF
+      - uses: astral-sh/setup-uv@v6
+        if: inputs.bundle-core
+        with:
+          version: "0.10.9"
+      - name: Vendor the pinned core and check for drift
+        if: inputs.bundle-core
+        run: |
+          python3 scripts/bundle_core.py vendor
+          git diff --exit-code -- pyproject.toml
+          python3 scripts/bundle_core.py check
+          uv lock --check
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=MIT
+          annotations: |
+            index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            index:org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+      - name: Smoke test each architecture
+        env:
+          REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          COMMAND: ${{ steps.meta.outputs.command }}
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          for platform in ${PLATFORMS//,/ }; do
+            echo "== $platform"
+            docker run --rm --platform "$platform" "$REF" "$COMMAND" --help >/dev/null
+            # Lists the tool surface without contacting an appliance (placeholder URL).
+            docker run --rm --platform "$platform" "$REF" "$COMMAND" tools | head -3
+            docker run --rm --platform "$platform" --entrypoint uname "$REF" -m
+          done
+      - name: Image SBOM (SPDX, syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/image.spdx.json
+          upload-artifact: false   # needs `actions: read`, which callers don't grant
+          upload-release-assets: false
+      - name: Attach the SBOM to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="$RUNNER_TEMP/${GITHUB_REPOSITORY#*/}-${GITHUB_REF_NAME}.image.spdx.json"
+          cp "$RUNNER_TEMP/image.spdx.json" "$asset"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
+          else
+            echo "::notice::no GitHub release for ${GITHUB_REF_NAME}; the SBOM is only attached to the image"
+          fi
+      - uses: sigstore/cosign-installer@v3
+        if: inputs.sign
+      - name: Sign (keyless) and attest the SBOM
+        if: inputs.sign
+        env:
+          COSIGN_YES: "true"
+          REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          # --recursive also signs each per-architecture manifest, so a pull by platform verifies too.
+          cosign sign --recursive "$REF"
+          cosign attest --type spdxjson --predicate "$RUNNER_TEMP/image.spdx.json" "$REF"
+      - name: Verify the signature and the attestation
+        if: inputs.sign
+        env:
+          REF: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: |
+          # Fulcio's certificate names this reusable workflow (the job's workflow ref) as the identity and the
+          # caller's repository and tag as extensions; check all three.
+          args=(
+            --certificate-identity-regexp '^https://github.com/dr-stutters/stutters-mcp-core/.github/workflows/publish-image.yml@'
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            --certificate-github-workflow-repository "$GITHUB_REPOSITORY"
+            --certificate-github-workflow-ref "$GITHUB_REF"
+          )
+          cosign verify "${args[@]}" "$REF" >/dev/null
+          cosign verify-attestation --type spdxjson "${args[@]}" "$REF" >/dev/null
+          echo "verified: $REF"
+          {
+            echo "### Image"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n'
+            echo "$REF"
+            echo '```'
+            echo "Verify:"
+            echo '```'
+            echo "cosign verify ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/dr-stutters/stutters-mcp-core/.github/workflows/publish-image.yml@' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  --certificate-github-workflow-repository ${GITHUB_REPOSITORY}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Image scan (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}@${{ steps.build.outputs.digest }}
+          severity: ${{ inputs.scan-severity }}
+          ignore-unfixed: true
+          exit-code: ${{ inputs.scan-fail && '1' || '0' }}
+          format: table
