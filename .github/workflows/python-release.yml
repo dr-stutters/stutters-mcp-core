@@ -1,5 +1,7 @@
 # Reusable release: on a v* tag, build sdist/wheel, attach them to a GitHub release and, when the
 # caller has a Dockerfile and sets `image: true`, push ghcr.io/<owner>/<repo>:<version> and :latest.
+# With `bundle-core: true` (ADR-005) the pinned core is vendored and drift-checked first; the wheel, the
+# sdist and the image (built from the same vendored tree) then carry it as <pkg>._core.
 name: python-release
 
 on:
@@ -8,6 +10,10 @@ on:
       image:
         type: boolean
         default: false
+      bundle-core:
+        type: boolean
+        default: false
+        description: Vendor the pinned core into the package before building (scripts/bundle_core.py).
       publish-pypi:
         type: boolean
         default: false   # ADR-001: git tags for now
@@ -26,9 +32,6 @@ on:
       sign:
         type: boolean
         default: false   # cosign signing is ready but off until the key decision (docs/SUPPLY-CHAIN.md)
-    secrets:
-      CORE_READ_TOKEN:
-        required: false
 
 permissions:
   contents: write
@@ -40,15 +43,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Allow git dependencies on private repos
-        env:
-          CORE_READ_TOKEN: ${{ secrets.CORE_READ_TOKEN }}
-        if: env.CORE_READ_TOKEN != ''
-        run: git config --global url."https://x-access-token:${CORE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.10.9"
+      - name: Vendor the pinned core and check for drift
+        if: inputs.bundle-core
+        run: |
+          python3 scripts/bundle_core.py vendor
+          git diff --exit-code -- pyproject.toml
+          python3 scripts/bundle_core.py check
+          uv lock --check
       - run: uv build
+      - name: Check the bundled core in the built artifacts
+        if: inputs.bundle-core
+        run: python3 scripts/bundle_core.py check --offline --dist dist
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -93,8 +101,6 @@ jobs:
           push: true
           provenance: ${{ inputs.attest && 'mode=max' || 'false' }}
           sbom: ${{ inputs.attest }}
-          secrets: |
-            core_read_token=${{ secrets.CORE_READ_TOKEN }}
           tags: |
             ${{ steps.img.outputs.name }}:${{ github.ref_name }}
             ${{ steps.img.outputs.name }}:latest

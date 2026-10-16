@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `scripts/bundle_core.py` and the reusable `bundle-core.yml` workflow (C20, #63, ADR-005): a server pins a core
+  tag + commit in `[tool.bundle-core]`; `vendor` copies core into the server package as `<pkg>._core` with imports
+  rewritten and merges core's runtime dependencies (plus extras) into the server's; `check` fails on drift (pin vs
+  bundle, hand edits, moved tag, stale dependency block, stale script copy, built wheel/sdist contents);
+  `update --tag` moves the pin. The workflow vendors, checks, builds the wheel and sdist, installs the wheel with
+  `pip install --no-index` in a clean venv and runs the suite against it.
+- `python-ci.yml` and `python-release.yml`: `bundle-core` input (vendor before building; the release also checks
+  drift and builds the image from the bundled tree).
+- Templates: the Dockerfile builds and installs the bundled wheel; `.dockerignore` keeps `scripts/bundle_core.py`.
+
+### Removed
+- `CORE_READ_TOKEN`: the optional secret on `python-ci.yml` / `python-release.yml`, the private-repo git config
+  step and the Docker build secret (core is public and bundled).
+
+### Adopting
+- Copy `scripts/bundle_core.py`; replace the git dependency with `[tool.bundle-core]` and the marker lines in
+  `[project].dependencies`; `echo "src/<pkg>/_core/" >> .gitignore`; rewrite `stutters_mcp_core` imports to
+  `<pkg>._core` (code, tests, `mock.patch` targets); `python scripts/bundle_core.py vendor && uv lock`; mypy:
+  `ignore_errors` for `<pkg>._core.*`; CI: `with: {bundle-core: true}` plus a `bundle-core.yml` job; release:
+  `bundle-core: true`; Dockerfile and compose from the templates (no token). A test asserting
+  `importlib.metadata.version("stutters-mcp-core")` should read `<pkg>._core.__version__` instead.
+
 ## [0.12.4] - 2026-10-15
 
 ### Added

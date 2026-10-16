@@ -16,8 +16,8 @@ jobs:                                           jobs:
 
 - **pip-audit** (`audit: true` by default) checks the locked runtime dependencies (`uv export --no-dev` from
   `uv.lock`, with hashes) against the PyPI/OSV advisory databases and fails on any known vulnerability.
-  `stutters-mcp-core` itself is a git dependency without a hash, so it is left out of a server's export;
-  its dependencies are still audited, and core's own CI audits core.
+  A server bundles core (ADR-005) and lists core's dependencies itself, so they are in its lock and audited;
+  the bundled code is pinned by tag + commit and drift-checked (`scripts/bundle_core.py check`).
 - A vulnerability that doesn't apply can be ignored per caller, with the reason next to it:
   `with: { audit-ignore: "GHSA-xxxx-xxxx-xxxx" }  # not reachable: we never call foo()`.
 
