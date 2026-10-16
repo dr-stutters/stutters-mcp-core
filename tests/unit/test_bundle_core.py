@@ -262,3 +262,9 @@ def test_rewrite_rejects_imports_it_cannot_rename() -> None:
         bc.rewrite_imports("import stutters_mcp_core.x\n", "p._core", "a.py")
     with pytest.raises(bc.BundleError, match="used as a name"):
         bc.rewrite_imports("x = stutters_mcp_core\n", "p._core", "a.py")
+
+
+def test_requirement_keys_ignore_spacing_and_quote_style() -> None:
+    assert bc._req_key('tomli>=2; python_version < "3.11"') == bc._req_key(
+        "tomli >= 2 ; python_version<'3.11'"
+    )

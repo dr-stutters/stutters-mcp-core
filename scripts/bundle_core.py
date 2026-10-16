@@ -100,7 +100,8 @@ def _req_name(req: str) -> str:
 
 
 def _req_key(req: str) -> str:
-    return re.sub(r"\s+", "", req).lower()
+    # wheel metadata writes markers with single quotes (python_version < '3.13'); pyproject may use double
+    return re.sub(r"\s+", "", req).lower().replace('"', "'")
 
 
 def load_pin(root: Path) -> Pin:
