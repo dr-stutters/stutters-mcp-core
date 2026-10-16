@@ -280,6 +280,45 @@ def create_server(settings, *, auth=None, transport=None):
 Aggregating tools that use `fetch_all` must check `page.complete` and say when results are
 partial. List tools get this for free: `Page.more`/`next_offset` covers APIs that don't report a total.
 
+## 6a. `check` preflight (core 0.14.0)
+
+`<server> check` runs without an MCP client and tells an operator what is missing. The server supplies one
+coroutine; the core runs it for every instance (`<P>_INSTANCES`), adds the configuration rows, classifies
+errors (TLS trust → `tls`, connection/timeout → `reachability`, 401 → `auth`, 403 → `role`), prints text or
+`--json`, and exits 1 on a failure (`--strict`: on a warning too).
+
+```python
+from ise_mcp._core.preflight import Preflight
+
+async def preflight(settings: Settings, pf: Preflight) -> None:
+    async with IseApp(settings) as app:
+        for surface in ("openapi", "ers", "mnt"):            # one reachability row per API surface
+            await pf.reach(surface, app.probe(surface), seconds=settings.probe_timeout)
+        if pf.failed:
+            return                                          # tls/auth/role/version are reported as skipped
+        role = await app.admin_role()                       # whatever the product exposes
+        pf.access(read=True, write=role.can_write, role=role.name)   # vs MCP_ENABLE_WRITES/_DANGEROUS
+        pf.version(await app.version(), tested=["3.5"], minimum="3.1")
+
+def main() -> None:
+    run_cli(SPEC, Settings, create_server, preflight=preflight)
+```
+
+- `pf.reach(surface, awaitable, detail=..., seconds=...)` records `reachability[surface]` ok (with the time) or
+  the classified failure, and returns the value or None. Pass authenticated calls: a successful reach also
+  counts as "credentials accepted" unless you record `auth` yourself.
+- `pf.access(read=, write=, dangerous=, role=)` takes True / False / None (unknown). It fails when an enabled
+  tier isn't allowed, warns when unknown, and warns when the account can do more than the enabled tiers need
+  (least privilege on a shared host). `dangerous` defaults to `write`.
+- `pf.version(found, tested=[...], minimum=...)`: ok on a tested release prefix, warn when untested, fail
+  when older than `minimum`.
+- `pf.ok/warn/fail(check, detail, hint=...)` for anything product-specific (FMC's rate budget, CatC's ISE
+  integration). Details and hints go through the secret scrubber.
+- Test each failure mode against respx mocks (`tests/unit/test_preflight.py` in core shows the pattern).
+
+`serve --http` / `serve --stdio` pick the transport on the command line (`MCP_TRANSPORT` otherwise; stdio
+is the default).
+
 ## 7. Tests
 
 ```python
@@ -306,6 +345,10 @@ Also replace `__PKG__` (e.g. `ise_mcp`) in the Dockerfile. The image is built fr
 (ADR-005) and needs no token: `docker build .` (it clones the pinned core tag itself when the context
 isn't vendored yet).
 
+The compose file pulls the published image (`ghcr.io/dr-stutters/__SERVER__`, `MCP_IMAGE_TAG` picks the tag,
+default `latest`); `docker compose up -d --build` still builds from the checkout. Releases publish the image
+with `publish-image.yml` (§9).
+
 ## 9. CI
 
 ```yaml
@@ -325,8 +368,11 @@ name: release
 on: {push: {tags: ["v*"]}}
 permissions: {contents: write, packages: write, id-token: write}   # required: callers must grant these
 jobs:
-  release:
+  release:   # wheel + sdist + Python SBOM on the GitHub release (a -rc tag makes a pre-release)
     uses: dr-stutters/stutters-mcp-core/.github/workflows/python-release.yml@main
-    with: {image: true, bundle-core: true}
+    with: {bundle-core: true}
     secrets: inherit
+  image:     # multi-arch GHCR image, cosign keyless signature, SBOM attestation (docs/SUPPLY-CHAIN.md)
+    needs: release
+    uses: dr-stutters/stutters-mcp-core/.github/workflows/publish-image.yml@main
 ```
