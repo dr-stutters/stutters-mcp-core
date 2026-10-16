@@ -149,6 +149,9 @@ jobs:
         run: |
           for platform in ${PLATFORMS//,/ }; do
             echo "== $platform"
+            # The local store keeps one image per index digest: drop the previous platform's pull first
+            # ("cannot overwrite digest" otherwise).
+            docker image rm -f "$REF" >/dev/null 2>&1 || true
             docker run --rm --platform "$platform" "$REF" "$COMMAND" --help >/dev/null
             # Lists the tool surface without contacting an appliance (placeholder URL).
             docker run --rm --platform "$platform" "$REF" "$COMMAND" tools | head -3
