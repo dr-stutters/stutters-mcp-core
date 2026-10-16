@@ -218,6 +218,8 @@ def rewrite_imports(text: str, target: str, path: str) -> str:
 def build_bundle(pin: Pin, tree: Path, commit: str) -> tuple[dict[str, bytes], dict[str, Any]]:
     """The files of src/<pkg>/_core (relative path -> bytes) and the BUNDLE.json metadata."""
     version, deps = core_dependencies(tree, pin.extras)
+    if pin.tag != f"v{version}":
+        raise BundleError(f"tag {pin.tag} holds core version {version}: tag and pyproject version must match")
     src = tree / "src" / CORE_PKG
     if not src.is_dir():
         raise BundleError(f"{tree}: no src/{CORE_PKG}")
