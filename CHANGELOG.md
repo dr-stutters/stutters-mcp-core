@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-16
+
+### Added
+- `stutters_mcp_core.preflight` and `run_cli(..., preflight=fn)` (C21, #66): `<server> check` reports
+  reachability per surface, TLS trust, credentials, the account's role vs the enabled read/write/dangerous tiers
+  and the product version vs the tested matrix, for every instance; plain text or `--json`, `--strict`
+  (warnings fail), `--instance NAME`; exit 1 on a failure, 2 on an unknown instance. Servers that pass no
+  `preflight` keep the old behaviour (print `<prefix>_status`).
+- `serve --http` / `serve --stdio` choose the transport on the command line.
+- Reusable `publish-image.yml` (C22, #67): multi-arch (amd64 + arm64) GHCR image from the bundled tree, version /
+  `latest` tags on releases and `-rcN` / `rc` tags on pre-releases, cosign keyless signature (recursive) and a
+  signed SPDX SBOM attestation (also attached to the GitHub release), per-architecture smoke test, Trivy report.
+
+### Changed
+- `python-release.yml` marks the GitHub release as a pre-release for tags with a `-` (`v1.2.0-rc1`).
+- Templates: `docker-compose.yml` pulls `ghcr.io/dr-stutters/__SERVER__:${MCP_IMAGE_TAG:-latest}`
+  (`--build` still builds locally); BUILDING-A-SERVER §6a (preflight) and §9 (release + image jobs).
+
+### Adopting
+- Bump `[tool.bundle-core]` to `v0.14.0` (`python scripts/bundle_core.py update --tag v0.14.0`); no dependency
+  changes.
+- Write `async def preflight(settings, pf)` and pass it to `run_cli`; test each failure mode with respx.
+- In `release.yml`: `python-release.yml` with `{bundle-core: true}` (no `image:`), plus a job
+  `image: {needs: release, uses: .../publish-image.yml@main}`.
+
 ## [0.13.0] - 2026-10-16
 
 ### Added

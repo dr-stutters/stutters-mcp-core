@@ -140,3 +140,5 @@ New prerequisite: **P11, a domain-joinable Windows client VM** in the lab (you'l
 | Item | Scope | Status |
 |---|---|---|
 | core [**C20**](https://github.com/dr-stutters/stutters-mcp-core/issues/63) | Bundle core into each server package (`<pkg>._core`, ADR-005): `scripts/bundle_core.py` + reusable `bundle-core.yml`; no git dependency, no `CORE_READ_TOKEN`. Adopted by ise I35, fmc F35, catc D31, cml L35 | in review |
+| core [**C21**](https://github.com/dr-stutters/stutters-mcp-core/issues/66) | Shared `check` preflight (`stutters_mcp_core.preflight`): reachability per surface, TLS, auth, role vs tiers, version vs matrix; text/`--json`; `serve --http`. For ise I36, fmc F36, catc D32, cml L37 | in review |
+| core [**C22**](https://github.com/dr-stutters/stutters-mcp-core/issues/67) | Reusable `publish-image.yml`: amd64+arm64 GHCR image, cosign keyless, SBOM attestation, `-rc` tags. For ise I37, fmc F37, catc D33, cml L36 | in review |

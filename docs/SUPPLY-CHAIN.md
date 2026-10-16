@@ -37,7 +37,44 @@ jobs:                                           jobs:
 5. The release step is idempotent: re-running a release (or one created by hand) replaces its assets.
 6. **cosign** signing: ready, **off** (`sign: false`) until a key decision is made (below).
 
-## Turning on image signing (decision for the repo owner)
+## Server images (`publish-image.yml`, core 0.14.0)
+
+Servers publish their image with the reusable `publish-image.yml`, called after `python-release.yml`
+(`needs: release`; see BUILDING-A-SERVER §9). On a `v*` tag it:
+
+1. checks the tag against `[project].version` (`v1.2.0-rc1` accepts `1.2.0rc1` or `1.2.0`), vendors the pinned
+   core and fails on drift (ADR-005);
+2. builds **linux/amd64 and linux/arm64** (QEMU) and pushes `ghcr.io/dr-stutters/<server>` with BuildKit
+   provenance and SBOM attestations;
+3. tags `:<version>`, `:v<version>` and `:latest` on a release tag; `:<version>-rcN`, `:v<version>-rcN` and
+   `:rc` on a pre-release tag (anything with a `-`), never `:latest`;
+4. smoke-tests the pushed image on each architecture (`<server> --help`, `<server> tools`);
+5. generates an SPDX SBOM (syft), attaches it to the GitHub release and to the image as a signed attestation;
+6. **signs keyless** with cosign (`--recursive`: the index and each platform manifest) and verifies the
+   signature and the attestation before finishing;
+7. scans with Trivy (report only unless `scan-fail: true`).
+
+Verify an image you pulled:
+
+```bash
+cosign verify ghcr.io/dr-stutters/ise-mcp-server:0.11.0 \
+  --certificate-identity-regexp '^https://github.com/dr-stutters/stutters-mcp-core/.github/workflows/publish-image.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository dr-stutters/ise-mcp-server
+cosign verify-attestation --type spdxjson ... (same flags) | jq -r .payload | base64 -d | jq .predicate
+```
+
+The certificate's identity is this reusable workflow; the repository and tag that called it are certificate
+extensions, which is why `--certificate-github-workflow-repository` pins the server.
+
+New GHCR packages are **private** until the owner makes them public: GitHub → the repository → Packages →
+the package → Package settings → Danger zone → Change visibility → Public (once per package).
+
+## Turning on image signing in `python-release.yml` (older path)
+
+`python-release.yml` can still build a single-arch image (`image: true`); servers use `publish-image.yml`
+instead, which signs keyless by default.
+
 
 Two options; both work with the documented caller permissions (`contents: write`, `packages: write`,
 `id-token: write`); none of the defaults needs `attestations: write`.
