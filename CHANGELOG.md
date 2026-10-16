@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-16
+
 ### Added
 - `scripts/bundle_core.py` and the reusable `bundle-core.yml` workflow (C20, #63, ADR-005): a server pins a core
   tag + commit in `[tool.bundle-core]`; `vendor` copies core into the server package as `<pkg>._core` with imports
@@ -13,6 +15,8 @@ All notable changes to this project are documented here. The format follows
   bundle, hand edits, moved tag, stale dependency block, stale script copy, built wheel/sdist contents);
   `update --tag` moves the pin. The workflow vendors, checks, builds the wheel and sdist, installs the wheel with
   `pip install --no-index` in a clean venv and runs the suite against it.
+- `bundle_core.py` refuses a tag whose `pyproject.toml` version differs (`v0.13.0` must hold `0.13.0`), so a
+  server never bundles a core that reports the wrong `core_version`.
 - `python-ci.yml` and `python-release.yml`: `bundle-core` input (vendor before building; the release also checks
   drift and builds the image from the bundled tree).
 - Templates: the Dockerfile builds and installs the bundled wheel; `.dockerignore` keeps `scripts/bundle_core.py`.
