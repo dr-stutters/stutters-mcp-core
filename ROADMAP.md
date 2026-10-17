@@ -1,6 +1,6 @@
 # Suite roadmap (stutters-mcp-core + the four servers)
 
-_Last updated 2026-10-15 (overnight 2): core v0.12.0. Production gate done in core except G6 (needs older product versions) and the owner-side parts of G9; Later C12 done; new items C13–C17 done. Servers are pull-only (ADR-003)._
+_Last updated 2026-10-17: **Wave 5 planned**: four cross-architecture scenario epics (C24–C27) and the scenario framework (C23); target core v0.15.0; suite board [MCP Suite roadmap](https://github.com/users/dr-stutters/projects/1). Current release v0.14.1. Earlier: 2026-10-15 (overnight 2): core v0.12.0. Production gate done in core except G6 (needs older product versions) and the owner-side parts of G9; Later C12 done; new items C13–C17 done. Servers are pull-only (ADR-003)._
 
 This is the suite-level roadmap: the shared foundation, cross-cutting themes and the production gate.
 Each server has its own `ROADMAP.md`:
@@ -69,6 +69,10 @@ The model carries out the steps with each server's tools; every write step stays
 | `catc_change_window` (template preview → deploy → compliance → rollback plan) | catc | catc | Next |
 | `cml_replicate_site` (read CatC/ISE/FMC config for a site → build a CML replica) | cml | cml, catc, ise, fmc | Later |
 | `ise_incident_timeline` (ISE auth history + FMC audit/health + CatC events/issues for a host, each queried on demand, merged by time) | ise | ise, fmc, catc | Later |
+| `ise_incident_response` (indicator → find across ISE, CatC and FMC → timeline → contain → verify → release; scenario [C26](https://github.com/dr-stutters/stutters-mcp-core/issues/73)) | ise | ise, catc, fmc | Now |
+| `catc_new_site_buildout` from a site spec (`catc_plan_site` → `ise_plan_site` + policy bundle → PnP or discovery → provision → verify; scenario [C27](https://github.com/dr-stutters/stutters-mcp-core/issues/74)) | catc | catc, ise | Now |
+| `catc_new_site_buildout` → `ise_onboard_nad` → `fmc_onboard_branch` → `fmc_prove_policy` (scenario [C24](https://github.com/dr-stutters/stutters-mcp-core/issues/71) Secure branch) | catc, ise, fmc | catc, ise, fmc, cml | Next |
+| `ise_employee_onboarding` → `fmc_prove_user_policy` → `ise_employee_offboarding` (scenario [C25](https://github.com/dr-stutters/stutters-mcp-core/issues/72) User-based firewall; AD through the existing `Windows_Server` MCP) | ise, fmc | ise, fmc | Next |
 
 ## Production gate
 
@@ -142,3 +146,98 @@ New prerequisite: **P11, a domain-joinable Windows client VM** in the lab (you'l
 | core [**C20**](https://github.com/dr-stutters/stutters-mcp-core/issues/63) | Bundle core into each server package (`<pkg>._core`, ADR-005): `scripts/bundle_core.py` + reusable `bundle-core.yml`; no git dependency, no `CORE_READ_TOKEN`. Adopted by ise I35, fmc F35, catc D31, cml L35 | in review |
 | core [**C21**](https://github.com/dr-stutters/stutters-mcp-core/issues/66) | Shared `check` preflight (`stutters_mcp_core.preflight`): reachability per surface, TLS, auth, role vs tiers, version vs matrix; text/`--json`; `serve --http`. For ise I36, fmc F36, catc D32, cml L37 | in review |
 | core [**C22**](https://github.com/dr-stutters/stutters-mcp-core/issues/67) | Reusable `publish-image.yml`: amd64+arm64 GHCR image, cosign keyless, SBOM attestation, `-rc` tags. For ise I37, fmc F37, catc D33, cml L36 | in review |
+
+
+## Wave 5 (planned 2026-10-17): cross-architecture scenarios
+Plan: `planning/WAVE5-DRAFT.md` in the private lab repo, approved 2026-10-17. Servers: [fmc](https://github.com/dr-stutters/fmc-mcp-server/blob/main/ROADMAP.md#wave-5-planned-2026-10-17-scenarios-depth-demos) (F54–F60, v0.14.0) ·
+[catc](https://github.com/dr-stutters/catc-mcp-server/blob/main/ROADMAP.md#wave-5-planned-2026-10-17-scenarios-depth-demos) (D46–D51, v0.11.0) ·
+[ise](https://github.com/dr-stutters/ise-mcp-server/blob/main/ROADMAP.md#wave-5-planned-2026-10-17-scenarios-depth-demos) (I49–I54, v0.12.0) ·
+[cml](https://github.com/dr-stutters/cml-mcp-server/blob/main/ROADMAP.md#wave-5-planned-2026-10-17) (L39–L40, v0.11.0); core C23–C27 (v0.15.0).
+**Suite board:** [MCP Suite roadmap](https://github.com/users/dr-stutters/projects/1): every open `roadmap` issue from the five repos, with `Server`, `Wave`, `Scenario` and `Blocker` fields; kept in sync by `scripts/project_sync.py` in the lab repo.
+
+Scoping answers (2026-10-17): full Wave 5 for fmc, catc and ise; cml and core get only the items the scenarios need. Themes: operator workflows and prompts, API depth, demo/PoC storylines; production gate items stay where they are (F17/D18/I17 need older product versions, G9 waits on the owner). Cross architecture: end-to-end scenarios as MCP prompts in the owning server, each proven live in CML, tracked as epics here. No orchestrator server, NetBox stays out. Blockers the owner clears: a domain-joinable Windows client VM (P11), a `c8000v` `.bin` on an HTTP server CatC can reach (P6); the FMC side of pxGrid identity is fmc F34's work.
+
+### How to approach the cross-architecture piece
+The suite already has the building blocks: prompts live in the server that starts a workflow and name the other
+servers they expect (C2), the prompt test kit checks cross-server references both ways (C9), and the lab repo has
+`mcp_call.py` to drive any suite tool from a script. What was missing is the layer above a single prompt: a **scenario**
+that strings two or three prompts together, with a lab recipe, seed and reset, evidence of a live run, and a talk track.
+
+A scenario (C23) is:
+1. **An epic issue in this repo** (`C#`, label `scenario`) with a checklist of the per-server issues it needs and the lab
+   tasks. The epic is done when the live run passes and the evidence is attached.
+2. **A sequence of prompts**, each owned by its server (no new server, no orchestrator). The model runs them in order;
+   the epic names the order and the hand-offs (what prompt 1 must leave behind for prompt 2).
+3. **A CML recipe** (existing or new) and a **lab runbook** in `stutters-mcp-lab/scenarios/<name>/` (seed, run, verify,
+   reset), driven by `mcp_call.py`. Lab-specific, private.
+4. **A public talk track** in `docs/scenarios/<name>.md`: the story, the prompts in order, the expected tool sequence,
+   what to show at each step, the proof. Lab-agnostic (placeholders, no lab addresses).
+5. **Evidence**: tool output and device CLI from the live run, attached to the epic.
+
+Why this and not a suite server: the four scenarios need almost no new cross-product *tools*. They need a few missing
+per-product reads and writes (find the host in CatC, live flows on the FTD, bulk NADs in ISE), the prompts that already
+exist, and a harness that proves the chain works. A suite server would duplicate tool surface and break the standalone
+packaging that Wave 4 delivered. If a cross-product *tool* ever proves necessary (one "find this host everywhere" call),
+that is the moment to reconsider, and it would still be one small server on the core.
+
+**Order:** C26 Incident first (nearly everything exists; a demo in days), then C27 Zero-touch site, then C24 Secure
+branch (builds on C27 and the SD-WAN work), then C25 User-based firewall (gated on fmc F34, size L, run in parallel
+from the start).
+
+### Core and cml items
+| # | Item | Why (operator value) | External needs | Test plan | Size | Milestone | Issue |
+|---|---|---|---|---|---|---|---|
+| [C23](https://github.com/dr-stutters/stutters-mcp-core/issues/70) | **Scenario framework**: the definition above; `docs/scenarios/README.md` (catalogue + template); `scenario` label; prompt test kit extension: a scenario manifest (ordered prompts, hand-offs, servers) checked against each server's `tools --json` so a renamed tool or prompt breaks CI, not the demo | Scenarios rot silently otherwise, like prompts did before C9 | none | Unit; the four manifests below pass | S | Now | [#70](https://github.com/dr-stutters/stutters-mcp-core/issues/70) |
+| [C24](https://github.com/dr-stutters/stutters-mcp-core/issues/71) | **Scenario: Secure branch** (epic). Site from C27 exists → ISE NAD + wired policy for the branch (I45, I49, I50) → branch FTD from a device template joins the SD-WAN hub (F54 on F51d) → client authenticates, lands in its VLAN/SGT → traffic to the DC allowed/blocked per policy (F56) → WAN failover keeps the session (F51) → talk track | The full "new branch, secured" story in one lab, every step preview-first | recipe L39; fmc v0.13.0 SD-WAN on main | Live on `secure-branch`; evidence on the epic | M (epic) | Next | [#71](https://github.com/dr-stutters/stutters-mcp-core/issues/71) |
+| [C25](https://github.com/dr-stutters/stutters-mcp-core/issues/72) | **Scenario: User-based firewall** (epic). AD user and group (`Windows_Server` MCP) → ISE 802.1X login (PEAP-AD, I11) → session to FMC over pxGrid (F34) → AD-group rule: alice allowed, bob blocked (F56) → offboard: AD disable → `ise` disconnect → FMC contain (C19's `win_offboard_user`, owned by ise as `ise_employee_offboarding` until C18 exists) → talk track | Identity policy proven on real traffic, by user name | F34 (L); C18 stays Later: the prompts use the existing `Windows_Server` MCP tools | Live on `ise-fmc-identity` (L34) | M (epic) | Next | [#72](https://github.com/dr-stutters/stutters-mcp-core/issues/72) |
+| [C26](https://github.com/dr-stutters/stutters-mcp-core/issues/73) | **Scenario: Incident, find and contain a host** (epic). One indicator (MAC, IP or user) → `ise_endpoint_360` + `catc_find_host` (D47) + `fmc_find_address` (F59) + `fmc_live_connections` (F55) → `ise_incident_timeline` → contain: ANC + CoA (I10), FMC dynamic object (F9), optional port shutdown (D48) → verify on switch, FTD and ISE → release and report. Prompt: `ise_incident_response` (I53) | The SOC story; most tools exist, the gaps are three reads and one write | none | Live on `ise-fmc-identity` + `catc-routers`; evidence on the epic | S (epic) | Now | [#73](https://github.com/dr-stutters/stutters-mcp-core/issues/73) |
+| [C27](https://github.com/dr-stutters/stutters-mcp-core/issues/74) | **Scenario: Zero-touch site buildout** (epic). One site spec (YAML: hierarchy, settings, pools, SSID, AAA, profile, devices) → `catc_plan_site` (D46) → ISE NDG + NADs (I49) + branch policy from a parametrised bundle (I50) → PnP claim or discovery → provision → verify (D44) → talk track. Prompt: `catc_new_site_buildout` extended to take the spec | Day-0 site build driven by data, repeatable for every branch | PnP lab `mcp-catc-pnp` (in place) | Live: build `mcp-test-site2` from a spec, tear down, rebuild | M (epic) | Now | [#74](https://github.com/dr-stutters/stutters-mcp-core/issues/74) |
+| [C19](https://github.com/dr-stutters/stutters-mcp-core/issues/62) | *(carry, Next → Now)* **Cross-product workflow pass**: re-run every existing cross-server prompt live and fix what breaks; the new AD-era prompts move into C25 (owned by ise) and `fmc_prove_user_policy` into fmc F56 | Unchanged | the lab | as issue | M | Now | [#62](https://github.com/dr-stutters/stutters-mcp-core/issues/62) |
+| [L39](https://github.com/dr-stutters/cml-mcp-server/issues/13) | cml **Recipe `secure-branch`**: hub FTDv (from `ftd-sdwan-single`'s hub) + one branch: FTDv spoke with two WAN transports through IOL carriers, cat9000v access switch, Alpine 802.1X client, inside Alpine server at the hub; `cml_verify_recipe` asserts (tunnel up, client authenticated, DC reachable) | C24 needs one lab with switch, firewall and identity together | ~30 GB RAM, 2 FTDv | `recipes-verify.yml`; live build and verify | M | Next | [#13](https://github.com/dr-stutters/cml-mcp-server/issues/13) |
+| [L40](https://github.com/dr-stutters/cml-mcp-server/issues/14) | cml **Recipe `extends:`** (optional): a recipe can start from another recipe's nodes and links and add to them, so `secure-branch` and the SD-WAN labs share the hub definition | Three SD-WAN recipes already duplicate the hub block | none | Unit on the recipe loader; `secure-branch` built both ways gives the same topology | S | Later | [#14](https://github.com/dr-stutters/cml-mcp-server/issues/14) |
+
+[C18](https://github.com/dr-stutters/stutters-mcp-core/issues/61) (win-mcp-server) stays **Later**: C25 runs on the existing `Windows_Server` MCP. Revisit after the wave. Carry-over: [C19](https://github.com/dr-stutters/stutters-mcp-core/issues/62) Next → Now.
+
+### Scenario catalogue
+| Epic | Owner prompt | Prompts in order | Servers | Recipe | Milestone |
+|---|---|---|---|---|---|
+| [C26](https://github.com/dr-stutters/stutters-mcp-core/issues/73) **Incident, find and contain a host** | ise `ise_incident_response` (I53) | `ise_incident_response` → (`ise_endpoint_360`, `catc_find_host`, `fmc_find_address`, `fmc_live_connections`, `ise_incident_timeline`, ANC + CoA, FMC contain, `catc_set_interface`) → release and report | ise, catc, fmc | `ise-fmc-identity` + `catc-routers` (in place) | Now |
+| [C27](https://github.com/dr-stutters/stutters-mcp-core/issues/74) **Zero-touch site buildout** | catc `catc_new_site_buildout` (D44, from a site spec) | `catc_new_site_buildout` → (`catc_plan_site`, `ise_plan_site`, I50 bundle import, PnP claim or discovery, `catc_provision_site`) → verify | catc, ise | `mcp-catc-pnp` (in place) | Now |
+| [C24](https://github.com/dr-stutters/stutters-mcp-core/issues/71) **Secure branch** | catc `catc_new_site_buildout` opens; fmc `fmc_prove_policy` closes | `catc_new_site_buildout` → `ise_onboard_nad` → `fmc_onboard_branch` → `fmc_prove_policy` | catc, ise, fmc, cml | `secure-branch` (L39) | Next |
+| [C25](https://github.com/dr-stutters/stutters-mcp-core/issues/72) **User-based firewall** | ise `ise_employee_onboarding` / `ise_employee_offboarding` | `ise_employee_onboarding` → `fmc_prove_user_policy` → `ise_employee_offboarding` | ise, fmc, `Windows_Server` MCP | `ise-fmc-identity` (L34) | Next |
+
+### Shared spec: one site description for CatC and ISE (D46, I49, I50, C27)
+```yaml
+site:
+  name: mcp-test-site2            # CatC site name and ISE NDG leaf
+  hierarchy: Global/mcp-test-lab/mcp-test-site2
+  ndg: "Location#All Locations#mcp-test-lab#mcp-test-site2"
+  address: "..."
+network_settings: {dns: [...], ntp: [...], aaa: {ise: ise.example.com, secret_ref: LAB_RADIUS_SECRET}}
+pools: [{name: site2-data, cidr: 10.2.10.0/24, gateway: 10.2.10.1, vlan: 210}]
+vlans: {employee: 210, contractor: 220, guest: 230, quarantine: 299}
+sgts: {employee: Employees, contractor: Contractors}
+wireless: {ssid: mcp-site2-corp, profile: mcp-site2-wireless}
+switching_profile: mcp-test-sw-profile
+devices: [{name: sw2, serial: ..., role: access, port_template: access-8021x}]
+policy_bundle: wired-8021x-mab   # I50 bundle stamped with the values above
+```
+Secrets are referenced by name (`secret_ref`), never written into the spec. Addresses and hostnames above are placeholders.
+
+### Order and parallelism (for the agents)
+1. **Now, no dependencies, in parallel per repo:** fmc F55, F59, F57, F46; catc D47, D49, D41; ise I44, I47, I52; core C23.
+2. **C26 Incident** as soon as F55, F59, D47, D48 land: I53, then the live run and talk track.
+3. **Site spec track:** D46 + I49 + I50 together (one shared schema, written first), then D44 extended, D50, and the **C27 Zero-touch** live run.
+4. **Branch track:** fmc v0.13.0 cut → F41, F54, L39, I45 → **C24 Secure branch** live run.
+5. **Identity track (long):** F34 from day one → F56 → **C25 User-based firewall** live run; I33/I34 when the P11 VM exists.
+6. **Prompts and demos** fill in around the tracks: F49, D42, D43 (after D12), D45, I46, I48, F60, D51, I54.
+7. Release each server once its Now items are merged: fmc v0.14.0, catc v0.11.0, ise v0.12.0, core v0.15.0, cml v0.11.0.
+
+### Counts
+| Repo | New items | Carried into Wave 5 | Now | Next | Later (unchanged) |
+|---|---|---|---|---|---|
+| fmc | 7 (F54–F60) | 6 (F34, F40, F41, F43, F46, F49) | 9 | 4 | F15, F17 |
+| catc | 6 (D46–D51) | 6 (D12, D41–D45) | 11 | 1 | D13, D15, D16, D18 |
+| ise | 6 (I49–I54) | 8 (I32–I34, I44–I48) | 11 | 3 | I17, I36 |
+| core | 5 (C23–C27) | 1 (C19) | 4 | 2 | C18, G6, G9 |
+| cml | 2 (L39–L40) | 0 | 0 | 1 | L40 |
