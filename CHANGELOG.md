@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-18
+
 ### Fixed
 - `<prefix>_api_call` (raw writes): the preview's `params` and `body` and the applied `result` mask secret
   fields at any depth (`manualPreSharedKey`, `preSharedKey`, passwords, secrets, communities, auth/MD5 keys)
