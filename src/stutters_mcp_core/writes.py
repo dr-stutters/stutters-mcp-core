@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import inspect
 import json
 import logging
+import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Iterable
@@ -278,8 +280,15 @@ class ToolRegistrar:
 # --- preview / confirm --------------------------------------------------------------------
 
 
+# Per-process key for the digests that bind a confirm token to its arguments and fingerprint. Keyed so a
+# low-entropy PSK or password in a write's arguments can't be brute-forced from a digest; tokens live in
+# memory only, so a key that changes on restart costs nothing.
+_DIGEST_KEY = os.urandom(32)
+
+
 def _digest(value: Any) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+    data = json.dumps(value, sort_keys=True, default=str).encode()
+    return hmac.new(_DIGEST_KEY, data, hashlib.sha256).hexdigest()
 
 
 @dataclass
