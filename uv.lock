@@ -1538,7 +1538,7 @@ wheels = [
 
 [[package]]
 name = "stutters-mcp-core"
-version = "0.14.1"
+version = "0.14.2"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
