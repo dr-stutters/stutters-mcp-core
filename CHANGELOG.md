@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `formatting.EXTRA_SECRET_KEYS`: exact key names a server marks as secret at import time
+  (`EXTRA_SECRET_KEYS.update({...})`) when they don't match `SECRET_KEY_RE`, such as a WLC's `key`, `wepKey`,
+  `ntpServerTrustKey` or `spacesConnCfgToken`. `is_secret_key` honours it (ahead of `NOT_SECRET_KEYS`), so
+  `mask_secrets`, the audit log and the `<prefix>_api_call` preview and result mask those fields too.
+
+### Security
+- Confirm tokens: `PreviewStore` binds a token to its arguments and fingerprint with an HMAC-SHA256 under a
+  per-process random key instead of a plain SHA-256, so a low-entropy PSK or password in a write's arguments
+  can't be brute-forced from the stored digest. Behaviour is unchanged: identical arguments redeem the token,
+  different ones are refused ("the arguments differ"). Tokens issued before a restart were already lost.
+
 ## [0.14.2] - 2026-10-18
 
 ### Fixed
