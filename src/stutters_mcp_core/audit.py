@@ -32,10 +32,17 @@ def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
         if is_secret_key(k) and v not in (None, ""):
             out[k] = MASK
             continue
-        v = _scrub_leaves(mask_secrets(v))
+        v = redact_value(v)
         text = json.dumps(v, default=str)
         out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
     return out
+
+
+def redact_value(v: Any) -> Any:
+    """`v` with every secret-named field masked (nested dicts and lists included) and credential shapes
+    in string leaves scrubbed: for request bodies and responses shown to the client (previews, raw API
+    call results). Structure and non-secret values are kept."""
+    return _scrub_leaves(mask_secrets(v))
 
 
 def _scrub_leaves(v: Any) -> Any:
