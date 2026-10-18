@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-18
+
 ### Added
 - `formatting.EXTRA_SECRET_KEYS`: exact key names a server marks as secret at import time
   (`EXTRA_SECRET_KEYS.update({...})`) when they don't match `SECRET_KEY_RE`, such as a WLC's `key`, `wepKey`,
