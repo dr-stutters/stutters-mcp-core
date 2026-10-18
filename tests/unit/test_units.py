@@ -3,14 +3,15 @@ from typing import Any
 
 import pytest
 
+from stutters_mcp_core import formatting
 from stutters_mcp_core.audit import redact_args
 from stutters_mcp_core.errors import InvalidRequest, TaskFailed, UpstreamTimeout
-from stutters_mcp_core.formatting import compact, list_result, set_max_chars
+from stutters_mcp_core.formatting import compact, is_secret_key, list_result, mask_secrets, set_max_chars
 from stutters_mcp_core.http import Page
 from stutters_mcp_core.inbound_auth import parse_tokens
 from stutters_mcp_core.spec import SpecIndex, build_index
 from stutters_mcp_core.tasks import poll_until
-from stutters_mcp_core.writes import field_changes
+from stutters_mcp_core.writes import PreviewStore, field_changes
 
 from .demo import SPEC_DOC, DemoSettings, make_settings
 
@@ -219,6 +220,48 @@ def test_audit_masks_nested_secrets() -> None:
         "s3cret" not in str(out)
         and out["body"]["NetworkDevice"]["authenticationSettings"]["enableKeyWrap"] == "false"
     )
+
+
+def test_extra_secret_keys_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = {"wlan": {"key": "lowpsk123", "wepKey": "abcde", "keyIndex": 1, "name": "corp"}}
+    assert not is_secret_key("key") and mask_secrets(body) == body
+    monkeypatch.setattr(formatting, "EXTRA_SECRET_KEYS", {"key", "wepKey"})
+    assert is_secret_key("key") and is_secret_key("wepKey") and not is_secret_key("keyIndex")
+    assert mask_secrets(body) == {
+        "wlan": {"key": "********", "wepKey": "********", "keyIndex": 1, "name": "corp"}
+    }
+    out = redact_args({"body": body})
+    assert "lowpsk123" not in str(out) and "abcde" not in str(out) and out["body"]["wlan"]["keyIndex"] == 1
+
+
+def test_extra_secret_keys_beat_not_secret_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(formatting, "EXTRA_SECRET_KEYS", {"secretStorage"})
+    assert is_secret_key("secretStorage")
+
+
+# --- preview / confirm ----------------------------------------------------------------------
+
+
+def test_preview_token_binds_args_with_keyed_digest() -> None:
+    import hashlib
+    import json
+
+    store = PreviewStore()
+    args = {"ssid": "corp", "passphrase": "lowpsk123"}
+    token = store.issue("demo_update_ssid", args, {"v": 1}, "alice")
+    pending = store.peek(token)
+    assert pending is not None
+    unkeyed = hashlib.sha256(json.dumps(args, sort_keys=True, default=str).encode()).hexdigest()
+    assert pending.args != unkeyed and "lowpsk123" not in pending.args
+    assert store.redeem(token, "demo_update_ssid", dict(args), {"v": 1}, "alice") is pending
+
+
+def test_preview_token_refuses_different_args() -> None:
+    store = PreviewStore()
+    token = store.issue("demo_update_ssid", {"ssid": "corp", "passphrase": "a"}, None, "alice")
+    with pytest.raises(InvalidRequest, match="the arguments differ"):
+        store.redeem(token, "demo_update_ssid", {"ssid": "corp", "passphrase": "b"}, None, "alice")
+    assert store.peek(token) is None
 
 
 def test_fill_path() -> None:

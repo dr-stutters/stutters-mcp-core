@@ -44,10 +44,15 @@ def max_chars() -> int:
 # Keys that match SECRET_KEY_RE but hold flags or names, not secrets. Extend per product with
 # `NOT_SECRET_KEYS.update({...})` at import time if needed.
 NOT_SECRET_KEYS: set[str] = {"passwordIDStore", "enableMultiSecret", "passwordPolicy", "secretStorage"}
+# Exact key names that hold secrets on one product but don't match SECRET_KEY_RE (a WLC's `key` or
+# `wepKey`). Extend per product with `EXTRA_SECRET_KEYS.update({...})` at import time.
+EXTRA_SECRET_KEYS: set[str] = set()
 _FLAG_VALUES = {"true", "false", "yes", "no", "enabled", "disabled", "on", "off"}
 
 
 def is_secret_key(key: str) -> bool:
+    if key in EXTRA_SECRET_KEYS:
+        return True
     return key not in NOT_SECRET_KEYS and bool(SECRET_KEY_RE.search(key))
 
 
