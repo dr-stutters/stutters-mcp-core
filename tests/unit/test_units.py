@@ -356,3 +356,19 @@ def test_field_changes_replace_reports_removed_keys() -> None:
         "removed": True,
     }
     assert "sourceNetworks.objects" in full
+
+
+def test_redact_value_nested_lists_and_strings() -> None:
+    from stutters_mcp_core.audit import redact_value
+
+    body = [
+        {"vpn": {"manualPreSharedKey": "abc12345", "automaticPreSharedKeyLength": 24}},
+        {"users": [{"name": "u", "password": "pw123456", "enablePassword": "en123456"}]},
+        "login?password=s3cr3tpw&user=x",
+    ]
+    out = redact_value(body)
+    assert out[0]["vpn"]["manualPreSharedKey"] == "********"
+    assert out[1]["users"][0] == {"name": "u", "password": "********", "enablePassword": "********"}
+    assert "s3cr3tpw" not in out[2] and "user=x" in out[2]
+    assert body[0]["vpn"]["manualPreSharedKey"] == "abc12345"  # the input is not changed
+    assert redact_value(None) is None and redact_value(3) == 3

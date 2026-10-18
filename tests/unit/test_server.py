@@ -280,3 +280,60 @@ async def test_spec_tool_examples_are_product_specific_or_neutral(api: Any) -> N
     async with Client(custom) as c:
         text = schema_text(await c.list_tools())
     assert "lab node" in text and "/labs/{lab_id}" in text
+
+
+async def test_api_call_write_masks_secrets_in_preview_and_result(api: Any) -> None:
+    """A raw write's preview and result never show a pre-shared key, password or other secret field,
+    however deeply nested (FMC VPN bodies carry `manualPreSharedKey` in `ikeSettings[].ikeV2Settings`)."""
+    body = {
+        "name": "mcp-sdwan-t1",
+        "ikeSettings": [
+            {
+                "ikeV2Settings": {
+                    "authenticationType": "MANUAL_PRE_SHARED_KEY",
+                    "manualPreSharedKey": "Sup3rPSK!",
+                }
+            }
+        ],
+        "endpoints": [{"preSharedKey": "pskA1234", "md5Key": "md5secret", "enabled": True}],
+        "password": "hunter2pw",
+        "radiusSecret": "radsecret",
+        "snmp": {"community_string": "c0mmunity", "authKey": "authk3y", "keyString": "ks123456"},
+        "description": "uplink",
+    }
+    echoed = {**body, "id": 9}
+    post = api.post("/api/items").mock(return_value=httpx.Response(201, json=echoed))
+    rw = create_server(make_settings(mcp_enable_writes=True, mcp_enable_dangerous=True))
+    args = {"method": "POST", "path": "/api/items", "body": body, "params": {"token": "qtok1234", "x": "1"}}
+    secrets = (
+        "Sup3rPSK!",
+        "pskA1234",
+        "md5secret",
+        "hunter2pw",
+        "radsecret",
+        "c0mmunity",
+        "authk3y",
+        "ks123456",
+    )
+    async with Client(rw) as c:
+        prev_text = (await c.call_tool("demo_api_call", args)).content[0].text
+        prev = json.loads(prev_text)
+        done_text = (await c.call_tool("demo_api_call", {**args, "confirm": prev["confirm"]})).content[0].text
+    for text in (prev_text, done_text):
+        for s in secrets:
+            assert s not in text
+    shown = prev["preview"]["body"]
+    assert shown["ikeSettings"][0]["ikeV2Settings"] == {
+        "authenticationType": "MANUAL_PRE_SHARED_KEY",
+        "manualPreSharedKey": "********",
+    }
+    assert shown["endpoints"][0] == {"preSharedKey": "********", "md5Key": "********", "enabled": True}
+    assert shown["description"] == "uplink" and shown["name"] == "mcp-sdwan-t1"
+    assert prev["preview"]["params"] == {"token": "********", "x": "1"}
+    done = json.loads(done_text)
+    assert done["status"] == "applied" and done["result"]["id"] == 9
+    assert done["result"]["ikeSettings"][0]["ikeV2Settings"]["manualPreSharedKey"] == "********"
+    # The upstream still received the real values: masking is for display only.
+    sent = json.loads(post.calls.last.request.content)
+    assert sent["ikeSettings"][0]["ikeV2Settings"]["manualPreSharedKey"] == "Sup3rPSK!"
+    assert sent["password"] == "hunter2pw"
