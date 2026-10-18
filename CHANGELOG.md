@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `<prefix>_api_call` (raw writes): the preview's `params` and `body` and the applied `result` mask secret
+  fields at any depth (`manualPreSharedKey`, `preSharedKey`, passwords, secrets, communities, auth/MD5 keys)
+  and scrub credential shapes in strings. Before, a raw FMC VPN body showed its pre-shared key in clear text.
+  The request sent upstream is unchanged. New `audit.redact_value`; `SECRET_KEY_RE` also matches `md5Key` and
+  `keyString`.
+
 ## [0.14.1] - 2026-10-16
 
 ### Fixed

@@ -22,7 +22,7 @@ _max_chars = 40_000
 # communities, PSKs, passwords, private keys). Values are masked unless a tool opts out.
 SECRET_KEY_RE = re.compile(
     r"(password|passphrase|passwd|secret|psk|preshared|pre_shared|private_?key|enable_?pass|"
-    r"auth_?key|authentication_?key|priv_?key|api_?key|shared_?key|encryption_?key|"
+    r"auth_?key|authentication_?key|md5_?key|key_?string|priv_?key|api_?key|shared_?key|encryption_?key|"
     r"message_?authenticator|^token$|auth_?token|access_?token|refresh_?token|x-auth|"
     r"snmp\w*community|community_?(string|name)|r[ow]_?community|(read|write)_?community)",
     re.IGNORECASE,

@@ -11,6 +11,7 @@ from fastmcp import Context
 from fastmcp.tools import ToolResult
 from pydantic import Field
 
+from stutters_mcp_core.audit import redact_value
 from stutters_mcp_core.errors import InvalidRequest
 from stutters_mcp_core.formatting import compact, dumps, object_result, text_result
 from stutters_mcp_core.spec.store import SpecStore
@@ -149,7 +150,8 @@ def register_spec_tools(
             f"Call any {product} REST endpoint (escape hatch for things no other tool covers). GET runs "
             f"immediately; other methods are preview-first: the first call returns a preview and a confirm "
             f"token, nothing changes until you repeat the call with confirm. Find paths with "
-            f"{prefix}_search_spec and bodies with {prefix}_get_definition."
+            f"{prefix}_search_spec and bodies with {prefix}_get_definition. Secret values (passwords, "
+            f"pre-shared keys, communities) are masked in the preview and the result."
         )
 
         @reg.dangerous(
@@ -175,7 +177,13 @@ def register_spec_tools(
             filled = fill_path(path, src.path_params(store.app) if src and src.path_params else {})
             plan = Plan(
                 f"{method} {validate_path(filled)}",
-                details={k: v for k, v in {"params": params, "body": body, "source": source}.items() if v},
+                # Masked: a body can carry a pre-shared key, password or community (the preview is shown to
+                # the user and logged by the client); the confirm call still sends the real values.
+                details={
+                    k: redact_value(v)
+                    for k, v in {"params": params, "body": body, "source": source}.items()
+                    if v
+                },
             )
             result = await preview_or_apply(
                 ctx,
@@ -185,6 +193,8 @@ def register_spec_tools(
                 plan=plan,
                 apply=lambda: _call(ctx, method, path, params, body, source),
             )
+            if "result" in result:  # upstream answers often echo the body, secrets included
+                result["result"] = redact_value(result["result"])
             return text_result(dumps(result))
 
     else:
