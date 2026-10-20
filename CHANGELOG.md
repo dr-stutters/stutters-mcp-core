@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Declare `mcp>=2.0,<3` (the official MCP Python SDK) as a runtime dependency. Core imports `mcp.types` directly
+  (`writes`, `audit`, `roles`, `inbound_limits`) but only received the package through fastmcp's `server` extra;
+  the range matches fastmcp's. No resolved versions change: the lock already had `mcp` 2.3.0.
+
+### Adopting
+- Nothing to do now. The next `python scripts/bundle_core.py update --tag <tag>` adds `mcp>=2.0,<3` to the
+  bundled core dependency block; run `uv lock` as usual (it already resolves `mcp` 2.x through fastmcp).
+
 ## [0.14.3] - 2026-10-18
 
 ### Added
