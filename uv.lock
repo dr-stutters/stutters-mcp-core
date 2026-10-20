@@ -1543,6 +1543,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
+    { name = "mcp" },
     { name = "pydantic-settings" },
     { name = "tzdata" },
     { name = "uvicorn" },
@@ -1568,6 +1569,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=4.1,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'tasks'", specifier = ">=4.1,<5" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "mcp", specifier = ">=2.0,<3" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "uvicorn", specifier = ">=0.30" },
