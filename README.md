@@ -9,6 +9,11 @@ Shared [FastMCP](https://gofastmcp.com) foundation for a family of network-platf
 | [catc-mcp-server](https://github.com/dr-stutters/catc-mcp-server) | Cisco Catalyst Center |
 | [fmc-mcp-server](https://github.com/dr-stutters/fmc-mcp-server) | Cisco Secure Firewall Management Center |
 
+> **Disclaimer.** These are not official Cisco products or repositories, and they aren't supported or endorsed
+> by Cisco. They're a personal project by [@dr-stutters](https://github.com/dr-stutters), for lab and learning
+> use only: don't point them at production systems. They're provided as is, with no warranty (see the
+> [license](LICENSE)). Cisco and the Cisco product names here are trademarks of Cisco Systems, Inc.
+
 > Status: 0.12.0 (see [CHANGELOG.md](CHANGELOG.md)). See [docs/BUILDING-A-SERVER.md](docs/BUILDING-A-SERVER.md) to
 > build a server, [docs/PRODUCTION.md](docs/PRODUCTION.md) for the operator controls, and [ROADMAP.md](ROADMAP.md).
 
