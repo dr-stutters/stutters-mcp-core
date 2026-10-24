@@ -10,7 +10,9 @@ sees the same `suite_*` prompt from each one; any copy renders the same text.
 
 | Prompt | Item | Legs (peers) | Tier | What it does |
 |---|---|---|---|---|
-| _(none yet)_ | | | | C53 adds `suite_change_check`; C51 `suite_maintenance_window`; later waves C46, C47, C49, C50, C52 |
+| `suite_change_check(site, phase, change, before, servers)` | C53 | catsdwan, ise, catc, fmc | read | phase=pre: `<prefix>_snapshot` per connected server, blobs kept in the conversation; phase=post: `<prefix>_compare_snapshot` per server, one table by severity with expected effects apart, verdict "nothing else changed" or the unexpected changes ([SNAPSHOTS.md](SNAPSHOTS.md)) |
+
+Planned: C51 `suite_maintenance_window`; later waves C46, C47, C49, C50, C52.
 
 ## How a suite prompt works
 
@@ -84,6 +86,8 @@ def suite_site_health(
 
 Rules (checked by `suite.pack_problems()` in core's unit tests):
 
+- Don't use `from __future__ import annotations` in a pack module: FastMCP resolves the prompt's argument
+  types at render time and cannot resolve the `SERVERS_ARG` alias from a string.
 - Name `suite_<workflow>`; a 30–1500 character docstring; every argument has `Field(description=...)`;
   a `servers: SERVERS_ARG = ""` argument.
 - Peers are keys of `suite.PEERS`; every tool a leg lists has that leg's prefix; every backticked tool in the

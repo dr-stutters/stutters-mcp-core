@@ -1,0 +1,125 @@
+{
+  "digest": "sha256:66d96b4b55059551",
+  "prefix": "catsdwan",
+  "scope": {
+    "site": "br1"
+  },
+  "sections": {
+    "alarms": {
+      "items": {
+        "hub1|interface-admin-state-change|Gi4": {
+          "label": "hub1 Gi4 admin down",
+          "ok": false,
+          "state": "minor"
+        }
+      },
+      "title": "Active alarms"
+    },
+    "app_route_sla": {
+      "items": {
+        "br1|biz-internet|hub1|biz-internet": {
+          "jitter_ms": 1.2,
+          "latency_ms": 18,
+          "loss_pct": 0,
+          "ok": true,
+          "sla_class": "Voice"
+        },
+        "br1|mpls|hub1|mpls": {
+          "jitter_ms": 1.2,
+          "latency_ms": 12.4,
+          "loss_pct": 0,
+          "ok": true,
+          "sla_class": "Voice"
+        }
+      },
+      "metrics": {
+        "jitter_ms": {
+          "better": "lower",
+          "limit": 30,
+          "tolerance": 10
+        },
+        "latency_ms": {
+          "better": "lower",
+          "limit": 150,
+          "tolerance": 20
+        },
+        "loss_pct": {
+          "better": "lower",
+          "limit": 5,
+          "tolerance": 1
+        }
+      },
+      "title": "App-route SLA"
+    },
+    "bfd": {
+      "items": {
+        "br1|biz-internet|br2|biz-internet": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|biz-internet|hub1|biz-internet": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|mpls|br2|mpls": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|mpls|hub1|mpls": {
+          "ok": true,
+          "state": "up"
+        }
+      },
+      "title": "BFD sessions"
+    },
+    "control": {
+      "items": {
+        "br1|biz-internet|vbond-1": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|biz-internet|vmanage-1": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|biz-internet|vsmart-1": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|mpls|vbond-1": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|mpls|vmanage-1": {
+          "ok": true,
+          "state": "up"
+        },
+        "br1|mpls|vsmart-1": {
+          "ok": true,
+          "state": "up"
+        }
+      },
+      "title": "Control connections"
+    },
+    "omp": {
+      "items": {
+        "br1|192.0.2.11": {
+          "ok": true,
+          "routes_received": 24,
+          "state": "up"
+        }
+      },
+      "metrics": {
+        "routes_received": {
+          "better": "higher",
+          "tolerance": 2
+        }
+      },
+      "title": "OMP peers"
+    }
+  },
+  "server": "cat-sdwan-mcp-server",
+  "server_version": "0.4.0",
+  "snapshot": 1,
+  "taken_at": "2026-10-24T09:00:00Z"
+}
