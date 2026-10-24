@@ -324,4 +324,4 @@ def _field_description(annotation: Any) -> str:
 
 
 # The pack's prompts register themselves into PACK on import.
-from stutters_mcp_core.suite import change_check  # noqa: E402, F401
+from stutters_mcp_core.suite import asbuilt_drift, change_check  # noqa: E402, F401

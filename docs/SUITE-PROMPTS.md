@@ -11,6 +11,7 @@ sees the same `suite_*` prompt from each one; any copy renders the same text.
 | Prompt | Item | Legs (peers) | Tier | What it does |
 |---|---|---|---|---|
 | `suite_change_check(site, phase, change, before, servers)` | C53 | catsdwan, ise, catc, fmc | read | phase=pre: `<prefix>_snapshot` per connected server, blobs kept in the conversation; phase=post: `<prefix>_compare_snapshot` per server, one table by severity with expected effects apart, verdict "nothing else changed" or the unexpected changes ([SNAPSHOTS.md](SNAPSHOTS.md)) |
+| `suite_asbuilt_drift(site, device, checks, servers)` | C62 | netbox, catc | read | NetBox interfaces, VLANs and cables (intent) vs Catalyst Center interfaces, VLANs and CDP/LLDP links (as built) for one site; one table per check with the side to fix (NetBox, network, site visit) and the fix proposed, not applied; with only one of the two servers connected it says there is nothing to compare and stops |
 
 Planned: C51 `suite_maintenance_window`; later waves C46, C47, C49, C50, C52.
 
