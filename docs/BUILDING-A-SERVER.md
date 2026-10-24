@@ -302,6 +302,14 @@ def create_server(settings, *, auth=None, transport=None):
 **Always forward `auth=` to `build_server`.** If it's missing, the HTTP transport runs unauthenticated.
 `run_cli` only passes auth when it calls your `create_server`.
 
+**Clock and timestamps (C69).** `<prefix>_status` reports `server.clock`: the appliance's clock offset,
+measured from the HTTP `Date` header of the requests `ApiClient` sends (positive = the appliance runs ahead),
+a `warning` past 5 s, and the timestamp convention. Return timestamps in ISO 8601 as the product reported
+them (with Z or an offset when the product gives a zone; never "corrected" for drift), and describe the
+product's own log and event stamps in `ServerSpec(log_timestamps="...")`, e.g. `"MnT: appliance local time,
+no zone"`. Timeline prompts subtract each server's `offset_seconds` before merging. A status that does not
+go through `ApiClient` can call `stutters_mcp_core.clock.observe(url, date_header, sent=, received=)`.
+
 Aggregating tools that use `fetch_all` must check `page.complete` and say when results are
 partial. List tools get this for free: `Page.more`/`next_offset` covers APIs that don't report a total.
 
