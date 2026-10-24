@@ -18,6 +18,8 @@ Format (`"manifest": 1`; keys are sorted so the file diffs cleanly):
                                          "references": ["fmc_contain_host", "ise_apply_anc", ...],
                                          "rendered": true}}}
 
+Prompts from the suite pack (C48, `suite_*`) also carry `"suite": true`.
+
 `references` are the declared `tools` plus the backticked tool names found by rendering the prompt with
 the prompt's registered `example` (else placeholder) arguments. That is best effort: a prompt that fails
 to render (it needs its lifespan, or the placeholders are invalid) has `"rendered": false` and lists only
@@ -103,6 +105,8 @@ async def build_manifest(
             "references": list(dict.fromkeys(refs)),
             "rendered": rendered,
         }
+        if meta.get("suite"):
+            prompts[p.name]["suite"] = True
     return {
         "manifest": MANIFEST_VERSION,
         "server": server,

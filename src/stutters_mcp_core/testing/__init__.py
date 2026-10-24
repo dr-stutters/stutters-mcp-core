@@ -51,6 +51,8 @@ from stutters_mcp_core.manifest import (
 )
 from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, sample_value
 from stutters_mcp_core.settings import BaseServerSettings
+from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt
+from stutters_mcp_core.suite import PEERS as SUITE_PEERS
 
 __all__ = [
     "as_caller",
@@ -59,6 +61,7 @@ __all__ = [
     "assert_inbound_references",
     "assert_prompt_contract",
     "assert_prompt_snapshots",
+    "assert_suite_pack",
     "assert_tool_contract",
     "build_manifest",
     "call_tool",
@@ -72,6 +75,7 @@ __all__ = [
     "reachable",
     "read_tool_manifests",
     "render_prompts",
+    "suite_pack_problems",
     "tool_contract_problems",
 ]
 
@@ -148,7 +152,9 @@ async def prompt_contract_problems(
     `known_prefixes` (e.g. {"cml", "ise", "fmc", "catc"}), when given, also flags `uses` entries outside
     that set (typos) and finds references to those servers that are missing from `uses`.
     `external_tools` ({prefix: names}, e.g. from `load_tool_manifests("tests/manifests")`) checks
-    references to other servers against their exported manifests; its prefixes count as known."""
+    references to other servers against their exported manifests; its prefixes count as known.
+    Suite pack prompts (`suite_*`, C48) are checked for naming, descriptions, arguments, rendering and
+    `uses` (against the suite peers) here; whether their leg tools exist is `suite_pack_problems`' job."""
     from stutters_mcp_core.prompts import find_tool_refs
 
     problems: list[str] = []
@@ -161,7 +167,8 @@ async def prompt_contract_problems(
         local = {t.name for t in await client.list_tools()} | {p.name for p in prompts}
         for p in prompts:
             where = f"prompt {p.name}"
-            if not p.name.startswith(prefix + "_") or not NAME_RE.match(p.name):
+            suite = is_suite_prompt(p.name, p.meta)
+            if (not suite and not p.name.startswith(prefix + "_")) or not NAME_RE.match(p.name):
                 problems.append(f"{where}: name must be snake_case and start with '{prefix}_'")
             desc = (p.description or "").strip()
             if not MIN_DESCRIPTION <= len(desc) <= MAX_DESCRIPTION:
@@ -177,11 +184,12 @@ async def prompt_contract_problems(
             if not isinstance(uses, list) or not uses:
                 problems.append(f"{where}: no `uses` metadata (register via ToolRegistrar.prompt)")
                 uses = [prefix]
-            if prefix not in uses:
+            if prefix not in uses and not suite:
                 problems.append(f"{where}: `uses` must include this server's prefix '{prefix}'")
-            if known_prefixes is not None:
+            if known_prefixes is not None or suite:
+                allowed = set(SUITE_PEERS) if suite else (known_prefixes or set())
                 for u in uses:
-                    if u not in known_prefixes:
+                    if u not in allowed:
                         problems.append(f"{where}: `uses` names unknown server prefix '{u}'")
             refs: list[str] = list(meta.get("tools") or [])
             try:
@@ -198,6 +206,10 @@ async def prompt_contract_problems(
                 refs += find_tool_refs(text, all_prefixes)
             for ref in dict.fromkeys(refs):
                 ref_prefix = ref.split("_", 1)[0]
+                if suite:  # leg tools are checked by suite_pack_problems (with `pending`)
+                    if ref_prefix not in uses:
+                        problems.append(f"{where}: references '{ref}' but '{ref_prefix}' is not in `uses`")
+                    continue
                 if ref_prefix == prefix:
                     if ref not in local:
                         problems.append(f"{where}: references unknown local tool '{ref}'")
@@ -340,6 +352,8 @@ async def inbound_reference_problems(
         if m.prefix == prefix:
             continue
         for prompt, refs in sorted(m.references_to(prefix).items()):
+            if is_suite_prompt(prompt, m.prompts.get(prompt)):
+                continue  # core's pack, checked by suite_pack_problems
             for ref in refs:
                 if ref not in local:
                     problems.append(
@@ -352,6 +366,58 @@ async def assert_inbound_references(mcp: FastMCP[Any], prefix: str, *paths: str 
     """Fail if another server's prompt (from the manifests in `paths`) references a missing local tool."""
     problems = await inbound_reference_problems(mcp, prefix, read_tool_manifests(*paths))
     assert not problems, "Other servers' prompts reference missing tools:\n  " + "\n  ".join(problems)
+
+
+async def suite_pack_problems(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *manifest_paths: str | Path,
+    pending: Iterable[str] = (),
+    pack: Mapping[str, SuitePrompt] | None = None,
+) -> list[str]:
+    """Check the suite prompt pack (C48) on a server built with all tiers on:
+    - every pack prompt is registered (the server calls `suite.register`);
+    - every leg tool of this server (`prefix`) is registered here;
+    - every leg tool of a peer whose manifest is in `manifest_paths` is listed in that manifest.
+    `pending` names leg tools that are known to be missing (a peer has not shipped them yet); they are
+    not reported, but listing one that now exists is (drop it from `pending`). Peers without a committed
+    manifest are not checked."""
+    pack = PACK if pack is None else pack
+    local = {t.name for t in await mcp.list_tools(run_middleware=False)}
+    registered = {p.name for p in await mcp.list_prompts(run_middleware=False)}
+    local |= registered
+    peers = {m.prefix: m.names for m in read_tool_manifests(*manifest_paths)}
+    peers[prefix] = local
+    waived = set(pending)
+    problems: list[str] = []
+    for sp in pack.values():
+        where = f"suite prompt {sp.name}"
+        if sp.name not in registered:
+            problems.append(f"{where}: not registered (add suite.register to build_server's register list)")
+        for leg in sp.legs:
+            names = peers.get(leg.peer)
+            if names is None:
+                continue
+            for tool in leg.tools:
+                if tool in names and tool in waived:
+                    problems.append(f"{where}: '{tool}' is in `pending` but {leg.peer} has it now")
+                elif tool not in names and tool not in waived:
+                    source = "this server" if leg.peer == prefix else f"the {leg.peer} manifest"
+                    problems.append(f"{where}: {leg.peer} leg calls '{tool}', which {source} does not list")
+    for tool in sorted(waived - {t for sp in pack.values() for t in sp.tools}):
+        problems.append(f"`pending` names '{tool}', which no suite prompt leg calls")
+    return list(dict.fromkeys(problems))
+
+
+async def assert_suite_pack(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *manifest_paths: str | Path,
+    pending: Iterable[str] = (),
+) -> None:
+    """Fail if the suite pack is not registered or a leg's tool is missing (see `suite_pack_problems`)."""
+    problems = await suite_pack_problems(mcp, prefix, *manifest_paths, pending=pending)
+    assert not problems, "Suite prompt pack problems:\n  " + "\n  ".join(problems)
 
 
 async def assert_tool_contract(mcp: FastMCP[Any], prefix: str) -> None:

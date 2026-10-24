@@ -89,6 +89,7 @@ stutters_mcp_core/
     tools.py       register_spec_tools(mcp, prefix=...) → search_spec, get_definition, api_call
   audit.py         FastMCP middleware → structured JSON audit events
   redact.py        secret/PII redaction for logs and errors
+  suite/           suite_* prompt pack every server registers (C48, docs/SUITE-PROMPTS.md)
   testing/
     plugin.py      pytest plugin (fixtures, respx router, live-lab marker)
     contract.py    tool-contract linter

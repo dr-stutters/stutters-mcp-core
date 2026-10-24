@@ -249,6 +249,13 @@ deletes snapshots for removed prompts. Use one directory per configuration (e.g.
 `prompts-rw`) when the text depends on the enabled tiers. `external_tools` also accepts a hand-written
 `{"fmc": ["fmc_contain_host", ...]}` mapping, e.g. for a tool another builder has promised but not shipped.
 
+### Suite prompt pack (C48)
+
+Cross-product workflows with no natural owner (`suite_*`: change check, maintenance window, ...) ship in core.
+Every server registers the whole pack by adding `suite.register` to `build_server(register=[...])`, and tests
+it with `assert_suite_pack(server_rw, "<prefix>", "tests/manifests", pending=[...])`. See
+[SUITE-PROMPTS.md](SUITE-PROMPTS.md).
+
 **Logs and events:** servers are pull-only (ADR-003). Expose a platform's logs and events as ordinary read
 tools that query the platform when called; don't add listeners, background pollers or buffers.
 
