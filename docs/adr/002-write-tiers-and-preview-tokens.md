@@ -39,6 +39,17 @@ token, because single-use and target-changed checks need state anyway; this is t
 netbox-mcp.)
 5. Preview and execution are both written to the audit log with the caller identity.
 
+(Amended 2026-10-24, C67: **confirm by elicitation.** `MCP_CONFIRM_MODE=token|elicit|auto`, default
+`token`. With `auto` or `elicit` and a client that advertises form elicitation, step 3 happens inside the
+preview call: the server asks the user "Apply this change?" through the client (a server-initiated
+`elicitation/create` on handshake-era sessions; an `InputRequiredResult` whose sealed `request_state`
+carries the step-2 token on 2026-07-28 sessions, redeemed against a fresh plan on the client's retry) and
+applies on accept. `elicit` also refuses `confirm=<token>` for one-person changes, so only a human answer
+confirms. Two-person changes, dry-run, blocked previews and closed change windows keep the token flow or no
+confirm at all. The dialog's schema is a single boolean and its text is masked like the audit log: a
+confirm never asks for a secret. Clients without elicitation keep tokens (`auto`) or get a blocked preview
+(`elicit`).)
+
 The generic `<prefix>_api_call` escape hatch is GET-only (a `read` tool) unless **dangerous** is
 enabled; then it also accepts POST/PUT/PATCH/DELETE as a `dangerous`, preview-first tool. It is not
 gated by `write`, because a raw call can reach deploys and deletions of live policy. Its responses go

@@ -161,6 +161,11 @@ class BaseServerSettings(BaseSettings):
     mcp_enable_writes: bool = Field(default=False, validation_alias=_alias("MCP_ENABLE_WRITES"))
     mcp_enable_dangerous: bool = Field(default=False, validation_alias=_alias("MCP_ENABLE_DANGEROUS"))
     mcp_confirm_ttl: int = Field(default=600, ge=30, validation_alias=_alias("MCP_CONFIRM_TTL"))
+    # C67: token (ADR-002), elicit (only the user's answer in the client's dialog confirms), auto (elicit
+    # when the client supports it, else token). Two-person changes always use tokens.
+    mcp_confirm_mode: Literal["token", "elicit", "auto"] = Field(
+        default="token", validation_alias=_alias("MCP_CONFIRM_MODE")
+    )
     mcp_cache_dir: Path | None = Field(default=None, validation_alias=_alias("MCP_CACHE_DIR"))
     mcp_max_response_chars: int = Field(
         default=40_000, ge=2_000, validation_alias=_alias("MCP_MAX_RESPONSE_CHARS")

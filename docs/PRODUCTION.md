@@ -65,6 +65,33 @@ Audit events added: `blocked` (a preview with blockers, including a product tool
 or rejected);
 `preview` / `applied` / `apply_failed` carry the `policy` section when rails are on.
 
+## Confirm in the client's dialog (roadmap C67, [ADR-002](adr/002-write-tiers-and-preview-tokens.md) amendment)
+
+`MCP_CONFIRM_MODE` picks how a previewed change is confirmed:
+
+| Value | Behaviour |
+|---|---|
+| `token` (default) | The preview returns a confirm token; the model repeats the call with `confirm=<token>` after the user approves (unchanged). |
+| `auto` | If the client advertises form **elicitation**, the preview call opens a confirmation dialog in the client ("Apply this change?") and applies on accept, in the same tool call (`status: applied`, `confirmed_via: elicit`; `declined` otherwise). Clients without elicitation get tokens. |
+| `elicit` | Only the user's answer in the dialog confirms a change. One-person changes get no token and `confirm=<token>` is refused, so a model can't confirm on its own; a client without elicitation gets a `blocked` preview saying so. |
+
+- Client support is checked per request: form elicitation in the client's capabilities, not inside a
+  background task (MCP_TASKS). Handshake-era sessions (2025-xx protocol versions) get a server-initiated
+  `elicitation/create`; 2026-07-28 sessions get an `InputRequiredResult` (SEP-2322) whose sealed
+  `request_state` carries the confirm token, and the client's retry redeems it against a freshly computed
+  plan (a target that changed meanwhile is refused). On the older channel, tools that pass `replan=` to
+  `preview_or_apply` get the same re-check; the rails (change window) are re-checked either way.
+- **Two-person changes always use tokens** (the second person confirms from their own session). Dry-run,
+  blocked previews and a closed change window never open a dialog.
+- **Never elicit secrets**: the dialog's only field is a boolean. Its text is the preview with secret keys
+  masked, the arguments redacted as in the audit log, and credential shapes scrubbed. Passwords and keys
+  always come from settings (`*_PASSWORD`, `*_FILE`, `*_REF`), never from an elicitation.
+- Audit events: `preview` with `confirm_mode: elicit`, then `applied` with `confirmed_via: elicit`, or
+  `declined` with `answer` (`decline`, `cancel`, `timeout`, `error`). An unanswered dialog times out
+  after `MCP_CONFIRM_TTL`.
+- `<prefix>_status` shows `server.confirm_mode`; the server instructions tell the model which flow to
+  expect.
+
 ## Per-user roles (core 0.6.0, roadmap G2)
 
 Map caller identities to roles; each role unlocks tool tiers. Off unless `MCP_ROLES` or `MCP_ROLES_FILE` is set.

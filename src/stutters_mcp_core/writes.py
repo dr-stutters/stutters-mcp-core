@@ -448,26 +448,11 @@ def _tier_of(ctx: Context, tool: str) -> str | None:
     return tier.value if tier is not None else None
 
 
-async def preview_or_apply(
-    ctx: Context,
-    *,
-    tool: str,
-    args: dict[str, Any],
-    confirm: str | None,
-    plan: Plan,
-    apply: Callable[[], Awaitable[Any]],
-) -> dict[str, Any]:
-    """Return a preview (issuing a token) when `confirm` is None; otherwise check the token against
-    the freshly computed plan and apply. `args` must be every argument except `confirm`.
-
-    The safety rails (stutters_mcp_core.policy) are applied here: dry-run and change-window refusals,
-    blast-radius limits and two-person confirmation. With no rails configured the output is unchanged."""
-    store = get_previews(ctx)
-    caller = current_caller()
-    target = target_name()
-    token_tool = tool if target is None else f"{tool}@{target}"  # a token only works on its target
+def _rails(
+    ctx: Context, tool: str, tier: str | None, plan: Plan, target: str | None
+) -> tuple[SafetyPolicy | None, dict[str, Any], list[str], list[str], bool]:
+    """(policy, info, blockers, refusals, two_person) from the safety rails and the instance rules."""
     policy = _policy_for(ctx)
-    tier = _tier_of(ctx, tool)
     info: dict[str, Any] = {}
     blockers = list(plan.blockers)
     refusals: list[str] = []
@@ -486,6 +471,45 @@ async def preview_or_apply(
             blockers += rule_blockers
             refusals += rule_refusals
             two_person = two_person or rules.two_person
+    return policy, info, blockers, refusals, two_person
+
+
+async def preview_or_apply(
+    ctx: Context,
+    *,
+    tool: str,
+    args: dict[str, Any],
+    confirm: str | None,
+    plan: Plan,
+    apply: Callable[[], Awaitable[Any]],
+    replan: Callable[[], Awaitable[Plan]] | None = None,
+) -> dict[str, Any]:
+    """Return a preview (issuing a token) when `confirm` is None; otherwise check the token against
+    the freshly computed plan and apply. `args` must be every argument except `confirm`.
+
+    The safety rails (stutters_mcp_core.policy) are applied here: dry-run and change-window refusals,
+    blast-radius limits and two-person confirmation. With no rails configured the output is unchanged.
+
+    With MCP_CONFIRM_MODE=auto|elicit and a client that supports elicitation (stutters_mcp_core.confirm),
+    the preview call asks the user to confirm in the client and applies on accept. `replan`, when given,
+    recomputes the plan after the user accepts so a target that changed while the dialog was open is
+    refused like a token whose fingerprint no longer matches."""
+    from stutters_mcp_core.confirm import (
+        ask_user,
+        confirm_mode,
+        elicit_channel,
+        elicit_message,
+        input_answer,
+        request_input,
+    )
+
+    store = get_previews(ctx)
+    caller = current_caller()
+    target = target_name()
+    token_tool = tool if target is None else f"{tool}@{target}"  # a token only works on its target
+    tier = _tier_of(ctx, tool)
+    policy, info, blockers, refusals, two_person = _rails(ctx, tool, tier, plan, target)
+    mode = confirm_mode(ctx)
     extra: dict[str, Any] = {}
     if target is not None:
         extra["instance"] = target
@@ -524,6 +548,56 @@ async def preview_or_apply(
             )
             _emit(ctx, "preview", tool, caller, plan.summary, **extra)
             return out
+        if mode != "token" and not two_person:
+            if refusals:
+                if mode == "elicit":
+                    out["warning"] = "This change can't be confirmed while " + "; ".join(refusals) + "."
+                    out["note"] = "Nothing was changed. Preview again when the change can be confirmed."
+                    _emit(ctx, "preview", tool, caller, plan.summary, confirm_mode=mode, **extra)
+                    return out
+                channel = None  # auto: the token flow below explains the refusal
+            else:
+                channel = elicit_channel(ctx)
+            if channel == "input":
+                answered = input_answer(ctx)
+                if answered is not None:  # the client's retry carrying the user's answer
+                    answer, held = answered
+                    if answer == "accept":
+                        store.redeem(held, token_tool, args, plan.fingerprint, caller)  # fresh plan
+                        return await _apply_elicited(
+                            ctx, tool, caller, target, plan, apply, None, tier, extra
+                        )
+                    store.cancel(held)
+                    return _declined(ctx, out, tool, caller, plan, answer, store.ttl, extra)
+                held = store.issue(token_tool, args, plan.fingerprint, caller)
+                if request_input(elicit_message(tool, out, _shown_args(args)), held):
+                    _emit(ctx, "preview", tool, caller, plan.summary, confirm_mode="elicit", **extra)
+                    out["note"] = "Waiting for the user's answer in the client's confirmation dialog."
+                    return out  # replaced by the InputRequiredResult (ConfirmInputMiddleware)
+                store.cancel(held)
+                channel = None
+            if channel == "push":
+                _emit(ctx, "preview", tool, caller, plan.summary, confirm_mode="elicit", **extra)
+                answer = await ask_user(
+                    ctx, elicit_message(tool, out, _shown_args(args)), wait_seconds=float(store.ttl)
+                )
+                if answer == "accept":
+                    return await _apply_elicited(ctx, tool, caller, target, plan, apply, replan, tier, extra)
+                if answer != "error" or mode == "elicit":
+                    return _declined(ctx, out, tool, caller, plan, answer, store.ttl, extra)
+                # auto mode and the dialog failed: fall back to a token below.
+            elif channel is None and mode == "elicit":
+                out["status"] = "blocked"
+                out["blockers"] = [
+                    "MCP_CONFIRM_MODE=elicit: changes are confirmed by the user in the client's "
+                    "confirmation dialog (MCP elicitation), and this client doesn't support it"
+                ]
+                out["note"] = (
+                    "Nothing was changed. Use a client that supports elicitation, or ask the operator "
+                    "for MCP_CONFIRM_MODE=auto (tokens for clients without it)."
+                )
+                _emit(ctx, "blocked", tool, caller, plan.summary, blockers=out["blockers"], **extra)
+                return out
         token = store.issue(token_tool, args, plan.fingerprint, caller, two_person=two_person)
         out["confirm"] = token
         out["expires_in_seconds"] = int(store.ttl)
@@ -555,6 +629,14 @@ async def preview_or_apply(
         _emit(ctx, "preview", tool, caller, plan.summary, **extra)
         return out
 
+    if mode == "elicit":
+        token_owner = store.peek(confirm)
+        if token_owner is None or not token_owner.two_person:
+            _emit(ctx, "refused", tool, caller, plan.summary, reasons=["confirm_mode=elicit"], **extra)
+            raise InvalidRequest(
+                "Confirm tokens are not accepted here (MCP_CONFIRM_MODE=elicit): call the tool without "
+                "confirm and the user confirms the change in the client's dialog. Nothing was changed."
+            )
     if refusals:
         _emit(ctx, "refused", tool, caller, plan.summary, reasons=refusals, **extra)
         raise InvalidRequest(f"Can't apply: {'; '.join(refusals)}. Nothing was changed.")
@@ -565,6 +647,83 @@ async def preview_or_apply(
     if pending.two_person:
         extra["requested_by"] = pending.caller
         extra["approved_by"] = caller
+    result = await _apply_change(ctx, tool, caller, plan, apply, extra)
+    out = {"status": "applied", "action": plan.summary}
+    if target is not None:
+        out["instance"] = target
+    if pending.two_person:
+        out["requested_by"] = pending.caller
+        out["approved_by"] = caller
+    if result is not None:
+        out["result"] = result
+    return out
+
+
+def _declined(
+    ctx: Context,
+    out: dict[str, Any],
+    tool: str,
+    caller: str,
+    plan: Plan,
+    answer: str,
+    ttl: float,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    _emit(ctx, "declined", tool, caller, plan.summary, answer=answer, **extra)
+    out["status"] = "blocked" if answer == "error" else "declined"
+    out["note"] = {
+        "decline": "The user declined the change in the confirmation dialog.",
+        "cancel": "The user dismissed the confirmation dialog.",
+        "timeout": f"Nobody answered the confirmation dialog within {int(ttl)} s.",
+        "error": "The client's confirmation dialog failed (MCP_CONFIRM_MODE=elicit).",
+    }[answer] + " Nothing was changed; call the tool again to preview it afresh."
+    return out
+
+
+async def _apply_elicited(
+    ctx: Context,
+    tool: str,
+    caller: str,
+    target: str | None,
+    plan: Plan,
+    apply: Callable[[], Awaitable[Any]],
+    replan: Callable[[], Awaitable[Plan]] | None,
+    tier: str | None,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply after the user accepted in the elicitation dialog, re-checking what may have changed while
+    the dialog was open: the rails (a change window can close) and, with `replan`, the target state."""
+    if replan is not None:
+        fresh = await replan()
+        if fresh.blockers or _digest(fresh.fingerprint) != _digest(plan.fingerprint):
+            reasons = fresh.blockers or ["the objects involved changed while the dialog was open"]
+            _emit(ctx, "refused", tool, caller, plan.summary, reasons=reasons, **extra)
+            raise InvalidRequest(f"Can't apply: {'; '.join(reasons)}. Nothing was changed; preview again.")
+        plan = fresh
+    _, _, blockers, refusals, _ = _rails(ctx, tool, tier, plan, target)
+    if refusals or blockers:
+        reasons = refusals + blockers
+        _emit(ctx, "refused", tool, caller, plan.summary, reasons=reasons, **extra)
+        raise InvalidRequest(f"Can't apply: {'; '.join(reasons)}. Nothing was changed.")
+    result = await _apply_change(ctx, tool, caller, plan, apply, {**extra, "confirmed_via": "elicit"})
+    out: dict[str, Any] = {"status": "applied", "action": plan.summary}
+    if target is not None:
+        out["instance"] = target
+    out["confirmed_via"] = "elicit"
+    if result is not None:
+        out["result"] = result
+    return out
+
+
+async def _apply_change(
+    ctx: Context,
+    tool: str,
+    caller: str,
+    plan: Plan,
+    apply: Callable[[], Awaitable[Any]],
+    extra: dict[str, Any],
+) -> Any:
+    """Run `apply` with the audit events around it and return its result."""
     try:
         result = await apply()
     except asyncio.CancelledError:
@@ -575,15 +734,7 @@ async def preview_or_apply(
         _emit(ctx, "apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         raise
     _emit(ctx, "applied", tool, caller, plan.summary, **extra)
-    out = {"status": "applied", "action": plan.summary}
-    if target is not None:
-        out["instance"] = target
-    if pending.two_person:
-        out["requested_by"] = pending.caller
-        out["approved_by"] = caller
-    if result is not None:
-        out["result"] = result
-    return out
+    return result
 
 
 def _emit(ctx: Context, event: str, tool: str, caller: str, summary: str, **extra: Any) -> None:

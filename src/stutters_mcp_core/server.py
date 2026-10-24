@@ -62,6 +62,20 @@ ENABLED. Always state the blast radius from the preview before asking the user t
 """
 
 
+CONFIRM_MODE_INSTRUCTIONS = {
+    "auto": """
+Confirmation (MCP_CONFIRM_MODE=auto): if your client supports elicitation, the preview call itself asks
+the user to approve the change in a dialog and applies it on accept (status 'applied', or 'declined');
+there is no token to repeat. Clients without elicitation get the confirm-token flow above.
+""",
+    "elicit": """
+Confirmation (MCP_CONFIRM_MODE=elicit): only the user confirms changes, in the client's dialog that the
+preview call opens (status 'applied' on accept, 'declined' otherwise). Confirm tokens are not accepted,
+except for two-person changes confirmed by a second user.
+""",
+}
+
+
 @dataclass(frozen=True)
 class ServerSpec:
     name: str  # distribution / FastMCP server name, e.g. "ise-mcp-server"
@@ -166,6 +180,7 @@ def build_server(
                 "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
                 "policy": policy,
                 "roles": roles,
+                "confirm_mode": settings.mcp_confirm_mode,  # C67
             }
             state: dict[str, Any] = (
                 TargetState(names[0], per_target, shared) if multi else {**per_target[names[0]], **shared}
@@ -191,6 +206,8 @@ def build_server(
     roles = settings.role_map()
     if settings.mcp_enable_writes and policy.active:
         instructions += _policy_instructions(policy)
+    if settings.mcp_enable_writes and settings.mcp_confirm_mode != "token":
+        instructions += CONFIRM_MODE_INSTRUCTIONS[settings.mcp_confirm_mode]
 
     mcp: FastMCP[Any] = FastMCP(
         name=spec.name,
@@ -216,6 +233,10 @@ def build_server(
     mcp.add_middleware(SecretErrorMiddleware(settings))
     if roles is not None:
         mcp.add_middleware(RoleMiddleware(roles, mcp))
+    if settings.mcp_enable_writes and settings.mcp_confirm_mode != "token":
+        from stutters_mcp_core.confirm import ConfirmInputMiddleware
+
+        mcp.add_middleware(ConfirmInputMiddleware())  # C67: confirm dialogs on 2026-07-28 clients
 
     if settings.mcp_metrics:
         metrics.enable(lambda name: name in getattr(mcp, "_stutters_tiers", {}))
@@ -341,6 +362,7 @@ def _register_status(
             "tls_verify": target_cfg.verify_ssl or target_cfg.ca_bundle is not None,
             "writes_enabled": settings.mcp_enable_writes,
             "dangerous_enabled": settings.mcp_enable_dangerous,
+            "confirm_mode": settings.mcp_confirm_mode,
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
             **target_info,
         }
