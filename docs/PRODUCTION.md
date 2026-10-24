@@ -26,8 +26,8 @@ by tool registration (deny / allow lists), shown in every preview under `policy`
 | `MCP_TWO_PERSON_TOOLS` | `@dangerous,fmc_deploy` | The confirm token must be redeemed by a **different** caller. |
 
 **Tool selectors** (deny, allow, two-person): comma-separated shell globs over tool names plus tier
-selectors `@read`, `@write`, `@dangerous`. `<prefix>_status` and `<prefix>_review_change` are never
-withheld. Status lists withheld tools under `server.safety.withheld_tools`.
+selectors `@read`, `@write`, `@dangerous`. `<prefix>_status` and the two-person tools (`review_change`,
+`list_pending_changes`, `cancel_pending_change`) are never withheld. Status lists withheld tools under `server.safety.withheld_tools`.
 
 **Change windows**, several separated by `;` (any open window allows the change):
 - `<days> <HH:MM>-<HH:MM> [Area/City]`: days are `Mon`..`Sun`, ranges (`Mon-Fri`), lists (`Sat,Sun`) or
@@ -49,13 +49,20 @@ the token to a second person (another named bearer token or OAuth identity), who
 `<prefix>_review_change(token)` to see the exact preview, arguments (secrets masked) and requester, and
 then repeats the call with `confirm=<token>`. The applied result and the audit log carry `requested_by`
 and `approved_by`. Over stdio every caller is `local`, so two-person tools can't be confirmed there.
+From a chat client, `<prefix>_list_pending_changes(mine, limit, offset)` lists what is waiting (preview id
+`pc_...`, tool, action, requester, seconds left; never the tokens), `<prefix>_review_change` accepts a
+preview id as well as the token, and `<prefix>_cancel_pending_change(preview_id, reason)` lets the
+requester withdraw or an approver reject a change: the token stops working and a `cancelled` audit event
+records `cancelled_by`, `cancelled_as` (requester or approver) and the reason. The queue is the in-memory
+preview store (the confirm TTL, ADR-002 §4): a restart clears it, and there is no durable store.
 The identity is the **token name**: give each person their own token (the server warns at startup when
 fewer than two tokens exist). Secret arguments are masked in the review, and the approver's call must carry
 the identical arguments, so for tools with secret arguments the requester has to share them out of band.
 If a tool's tier is unknown, tier selectors such as `@dangerous` count as matching (fail closed).
 
 Audit events added: `blocked` (a preview with blockers, including a product tool's own `Plan.blockers`),
-`refused` (a confirm refused by a rail or blocker);
+`refused` (a confirm refused by a rail or blocker); `cancelled` (a pending two-person change withdrawn
+or rejected);
 `preview` / `applied` / `apply_failed` carry the `policy` section when rails are on.
 
 ## Per-user roles (core 0.6.0, roadmap G2)
@@ -88,7 +95,8 @@ Map caller identities to roles; each role unlocks tool tiers. Off unless `MCP_RO
 - Identity and role are shown in previews (`requested_by: {caller, role}`), in `<prefix>_status`
   (`server.access`: your identity and role, the default role, the number of entries) and in every audit
   event (`role`). At HTTP startup the log lists each token name with its role.
-- `<prefix>_review_change` (two-person review) needs `rw` or `admin`, like the change it reviews.
+- `<prefix>_review_change`, `<prefix>_list_pending_changes` and `<prefix>_cancel_pending_change`
+  (two-person review) need `rw` or `admin`, like the change they act on.
 - Combine with two-person confirm: e.g. `MCP_TWO_PERSON_TOOLS=@dangerous` with two `admin` users.
 
 ## Secrets (core 0.7.0, roadmap G4)

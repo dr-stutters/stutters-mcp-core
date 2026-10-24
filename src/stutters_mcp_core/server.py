@@ -36,6 +36,7 @@ from stutters_mcp_core.clock import clock_status
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.pending import register_pending_tools
 from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
 from stutters_mcp_core.roles import RoleMiddleware
@@ -235,6 +236,7 @@ def build_server(
     instance_two_person = any(InstanceRules.from_settings(c).two_person for c in configs.values())
     if (policy.two_person or instance_two_person) and settings.mcp_enable_writes:
         _register_review(reg, spec)
+        register_pending_tools(reg, spec.prefix)  # C66: list / cancel what awaits a second person
     for fn in register:
         fn(reg)
     if spec_sources is not None:
@@ -293,7 +295,8 @@ def _policy_instructions(policy: SafetyPolicy) -> str:
     if policy.two_person:
         lines.append(
             "- Some changes need two-person approval: a different user confirms the token "
-            "(they can inspect it with the review_change tool)."
+            "(they can inspect it with the review_change tool; list_pending_changes shows what is "
+            "waiting and cancel_pending_change withdraws or rejects one)."
         )
     return "\n".join(lines) + "\n"
 
@@ -387,10 +390,17 @@ def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
     @reg.read(title="Review a pending change", name=name, description=description)
     async def review_change(
         ctx: Context,
-        token: Annotated[str, Field(description="The confirm token from the requester's preview (pv_...)")],
+        token: Annotated[
+            str,
+            Field(
+                description="The confirm token from the requester's preview (pv_...), or the preview id "
+                "(pc_...) from the list_pending_changes tool"
+            ),
+        ],
     ) -> dict[str, Any]:
         store = get_previews(ctx)
-        pending = store.peek(token)
+        found = store.find(token.strip())
+        token, pending = found if found is not None else (token, None)
         if pending is None or not pending.two_person or pending.preview is None:
             raise InvalidRequest(
                 "Unknown or expired two-person token. Ask the requester to preview the change again."
@@ -399,6 +409,7 @@ def _register_review(reg: ToolRegistrar, spec: ServerSpec) -> None:
         return {
             "tool": tool_name,
             **({"instance": on_target} if on_target else {}),
+            "preview_id": store.preview_id(token),
             "requested_by": pending.caller,
             "expires_in_seconds": store.remaining(pending),
             **pending.preview,
