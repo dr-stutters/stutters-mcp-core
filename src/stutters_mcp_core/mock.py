@@ -7,7 +7,7 @@ the mock: the production client is unchanged (the server's URL simply points at 
 
     # 1. record: a reverse proxy in front of the appliance; point the server's URL at it, run the storyline
     python -m stutters_mcp_core.mock record --upstream https://manager.example --out routes.json \\
-        --storyline "branch triage" --replace 10.61.=198.51.100. [--insecure] [--port 8080]
+        --storyline "branch triage" --replace 10.0.0.=198.51.100. [--insecure] [--port 8080]
     #    (Ctrl-C writes routes.json; `check` lists anything that still looks like lab data or a secret)
     python -m stutters_mcp_core.mock check routes.json
     # 2. replay: answer the same requests offline
@@ -74,6 +74,8 @@ DEFAULT_IGNORE_QUERY = (
 KEEP_HEADERS = ("content-type", "link", "x-total-count")
 _TOKEN_HEADER = re.compile(r"(?i)(token|auth|session|csrf|xsrf|cookie|api-key)")
 MASKED = "mock-masked"
+# A text body that is one opaque word, e.g. SD-WAN's XSRF token from /dataservice/client/token.
+_BARE_TOKEN = re.compile(r"[A-Za-z0-9._~+/=-]{16,}")
 
 Query = dict[str, list[str]]
 
@@ -394,7 +396,11 @@ class Recorder:
         else:
             from stutters_mcp_core.secrets import scrub_text
 
-            route.text = self.scrub.text(scrub_text(resp.text)) if resp.content else ""
+            text = resp.text.strip()
+            if self.allow.search(path) and _BARE_TOKEN.fullmatch(text):
+                route.text = MASKED  # a login/token answer that is the token itself
+            else:
+                route.text = self.scrub.text(scrub_text(resp.text)) if resp.content else ""
             route.content_type = ctype.split(";")[0] or None
         q = {self.scrub.text(k): [self.scrub.text(x) for x in v] for k, v in query.items()}
         with self.lock:

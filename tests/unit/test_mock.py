@@ -156,7 +156,7 @@ def upstream() -> httpx.MockTransport:
             name = request.url.params.get("name", "all")
             return httpx.Response(
                 200,
-                json={"items": [{"name": name, "ip": "10.61.1.5", "password": "hunter22"}]},
+                json={"items": [{"name": name, "ip": "10.0.0.5", "password": "hunter22"}]},
                 headers={"X-Total-Count": "1", "X-Auth-Token": "tok", "Server": "nginx"},
             )
         if path == "/api/config":
@@ -170,7 +170,7 @@ def test_recorder_records_scrubbed_gets_and_refuses_writes() -> None:
     rec = Recorder(
         "https://manager.lab.example:8443",
         storyline="triage",
-        replace={"10.61.1.": "198.51.100."},
+        replace={"10.0.0.": "198.51.100."},
         transport=upstream(),
     )
     login = rec.handle("POST", "/api/login", {"Host": "x"}, b'{"u": "admin"}')
@@ -218,3 +218,19 @@ def test_cli_check_and_serve_arguments(tmp_path: Path, capsys: pytest.CaptureFix
     assert '"storyline": "branch triage"' in capsys.readouterr().out
     with pytest.raises(SystemExit, match="OLD=NEW"):
         mock._pairs(["nope"])
+
+
+def test_recorder_masks_a_bare_token_body_from_a_login_path() -> None:
+    token = "4F3A9C2B7D1E0F6A5B8C9D2E3F4A1B0C7D6E5F4A"
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/dataservice/client/token":
+            return httpx.Response(200, text=token, headers={"content-type": "text/html"})
+        return httpx.Response(200, text="ABCDEFGHIJKLMNOPQRSTUVWXYZ", headers={"content-type": "text/plain"})
+
+    rec = Recorder("https://upstream.example", storyline="t", transport=httpx.MockTransport(upstream))
+    # the caller still gets the real token; only the capture is masked
+    assert rec.handle("GET", "/dataservice/client/token", {}, b"").body == token.encode()
+    rec.handle("GET", "/api/serial", {}, b"")
+    assert rec.routes.match("GET", "/dataservice/client/token").text == MASKED  # type: ignore[union-attr]
+    assert rec.routes.match("GET", "/api/serial").text == "ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # type: ignore[union-attr]
