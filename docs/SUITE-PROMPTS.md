@@ -21,7 +21,7 @@ sees the same `suite_*` prompt from each one; any copy renders the same text.
   takes a `servers` argument: comma-separated prefixes or server names (`catsdwan,ise`,
   `cat-sdwan-mcp-server, ise-mcp-server`).
   - Given: the body holds only the connected legs. Its first lines name every skipped leg and what is
-    therefore not checked (`catc leg skipped: server not connected, so device and site health is not checked.`),
+    therefore not checked (`catc leg skipped: server not connected; not checked: device and site health.`),
     and the model repeats that at the top of its answer.
   - Empty: the body lists every leg and tells the model to check which `<prefix>_*` tools it has, skip the
     other legs and start its answer with one line per skipped leg.

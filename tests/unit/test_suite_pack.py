@@ -123,7 +123,7 @@ async def test_renders_with_and_without_peers(pack: dict[str, SuitePrompt]) -> N
     assert only_demo.startswith(
         "This suite workflow uses these servers: demo (Demo appliance), other (Other appliance).\n"
         "Skipped legs (server not connected); say so in the first lines of your answer:\n"
-        "- other leg skipped: server not connected, so the other things is not checked.\n"
+        "- other leg skipped: server not connected; not checked: the other things.\n"
     )
     assert "`demo_list_items` for switch items" in only_demo and "other_list_things" not in only_demo
 

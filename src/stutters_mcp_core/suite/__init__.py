@@ -208,13 +208,13 @@ class LegPlan:
             lines.append(
                 f"First check which of these tools you have: {prefixes}. Skip the leg of every server whose "
                 "tools you don't have, and start your answer with one line per skipped leg: "
-                "'<server> leg skipped: server not connected, so <what it checks> is not checked'."
+                "'<server> leg skipped: server not connected; not checked: <what the leg checks>'."
             )
             return "\n".join(lines)
         if self.skipped:
             lines.append("Skipped legs (server not connected); say so in the first lines of your answer:")
             lines += [
-                f"- {leg.peer} leg skipped: server not connected, so {leg.purpose} is not checked."
+                f"- {leg.peer} leg skipped: server not connected; not checked: {leg.purpose}."
                 for leg in self.skipped
             ]
         if not self.legs:
