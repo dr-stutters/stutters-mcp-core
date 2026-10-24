@@ -23,7 +23,8 @@ Settings, transports (stdio / Streamable HTTP), inbound bearer-token auth, an up
 (login/refresh auth strategies, retries, rate limiting, pagination), error mapping, output formatting,
 preview-first write guard, async task poller, OpenAPI spec search tools, audit logging, MCP prompts, and
 test helpers: tool and prompt contract linters plus the prompt test kit (manifests exported with
-`<server> tools --json`, cross-server reference checks, prompt snapshots). Product-specific code lives in each server repo.
+`<server> tools --json`, cross-server reference checks, prompt snapshots) and the suite prompt pack
+(`suite_*` cross-product prompts every server registers, [docs/SUITE-PROMPTS.md](docs/SUITE-PROMPTS.md)). Product-specific code lives in each server repo.
 
 Production controls, all opt-in ([docs/PRODUCTION.md](docs/PRODUCTION.md)): safety rails (dry-run, change
 windows, deny/allow lists, blast-radius limits, two-person confirm), per-user roles, OAuth 2.1 next to named
