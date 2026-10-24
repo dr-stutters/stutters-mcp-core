@@ -6,6 +6,29 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-24
+
+### Added
+- Suite prompt pack (C48, #112): `stutters_mcp_core.suite` (`suite_prompt`, `SuiteLeg`, `plan_legs`,
+  `suite.register`). Core ships `suite_*` prompts; each lists the peer servers it needs and names the legs it skips
+  when a peer is absent. Prompt kit: `assert_suite_pack` / `suite_pack_problems`; the prompt contract and inbound
+  checks understand `suite_*` prompts; manifests mark them `"suite": true` (format stays 1). Docs:
+  docs/SUITE-PROMPTS.md.
+- Snapshot contract (C53, #113): `stutters_mcp_core.snapshot`, a versioned, client-held health blob (schema 1,
+  at most 24,000 characters, sha256 digest), `parse`, `compare` by severity (major/minor/info, verdict, counts),
+  and `register_snapshot_tools` for `<prefix>_snapshot` / `<prefix>_compare_snapshot` (read tier, nothing stored
+  on the server, ADR-003). Suite prompt `suite_change_check` (pre/post change check across SD-WAN, ISE, Catalyst
+  Center and FMC). Docs: docs/SNAPSHOTS.md.
+
+### Security
+- fastmcp 4.1.0 -> 4.1.3 in the lock (GHSA-7xgj-8392-5q4r, GHSA-vqqp-x5qm-5qp4).
+
+### Adopting
+- Optional until a server builds a suite prompt or snapshot tools: add `suite.register` to
+  `build_server(register=[...])` and `assert_suite_pack(...)` to the prompt tests, then commit the new prompt
+  snapshots and regenerate the manifests. Snapshot tools: implement a `take(site)` and call
+  `register_snapshot_tools` (see docs/SNAPSHOTS.md).
+
 ## [0.14.4] - 2026-10-22
 
 ### Changed
