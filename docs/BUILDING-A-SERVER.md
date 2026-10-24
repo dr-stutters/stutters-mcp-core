@@ -167,6 +167,9 @@ Rules (enforced by `assert_tool_contract`):
   - Use `field_changes(current, desired)` for the diff.
 - Use the dangerous tier for anything disruptive: deploys, provisioning, CoA/disconnect, HA changes, deleting live policy, rebooting.
 - Accept names **or** ids wherever possible, resolving them in the tool.
+- Name arguments from the suite vocabulary ([VOCABULARY.md](VOCABULARY.md)): `since_hours`, `wait`,
+  `timeout_seconds`, `response_format`, `limit`/`offset`, `detail`, `device`, `confirm`. `warn_vocabulary`
+  (§7) reports drift as warnings.
 - Prefer a few task-oriented tools ("why did this auth fail") over many thin CRUD wrappers. `<prefix>_api_call` covers the rest.
 - When a write can count what it touches (devices deployed to, endpoints, rules), set
   `Plan(blast_radius=N)`; operators can cap it (`MCP_MAX_BLAST_RADIUS`, see [PRODUCTION.md](PRODUCTION.md)).
@@ -355,6 +358,8 @@ async def test_contract():                       # run with writes+dangerous on 
 - Unit tests mock HTTP with `respx` and call tools through `call_tool` or `fastmcp.Client`.
 - Live tests use `live_settings(Settings, "ISE_")`, which reads `.env` and skips when the lab is unreachable.
 - Live write tests create and delete objects named `mcp-test-*`.
+- Vocabulary (C68): `await warn_vocabulary(server, "ise", allow={...})` in the contract test reports argument
+  names off [VOCABULARY.md](VOCABULARY.md) as pytest warnings; it never fails the build.
 - Prompts: also the prompt test kit (§5a): `external_tools=load_tool_manifests(...)`,
   `assert_inbound_references` and `assert_prompt_snapshots`.
 

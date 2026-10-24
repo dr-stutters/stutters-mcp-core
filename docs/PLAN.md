@@ -91,6 +91,7 @@ stutters_mcp_core/
   redact.py        secret/PII redaction for logs and errors
   suite/           suite_* prompt pack every server registers (C48, docs/SUITE-PROMPTS.md)
   snapshot.py      snapshot contract: blob builder, parse, compare, <prefix>_snapshot tools (C53, docs/SNAPSHOTS.md)
+  vocabulary.py    argument vocabulary lint, warnings only (C68, docs/VOCABULARY.md)
   testing/
     plugin.py      pytest plugin (fixtures, respx router, live-lab marker)
     contract.py    tool-contract linter
