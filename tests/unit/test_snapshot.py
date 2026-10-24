@@ -22,6 +22,7 @@ from stutters_mcp_core.snapshot import (
     register_snapshot_tools,
 )
 from stutters_mcp_core.suite import pack_problems
+from stutters_mcp_core.suite.access_review import PENDING_TOOLS
 from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
 
 from . import demo
@@ -388,13 +389,15 @@ async def test_change_check_passes_the_prompt_kit(tmp_path: Path) -> None:
     (tmp_path / "ise.json").write_text(
         json.dumps({"manifest": 1, "server": "ise-mcp-server", "prefix": "ise", "tools": {"ise_status": {}}})
     )
-    problems = await suite_pack_problems(server, "demo", tmp_path)
+    # Only this prompt's legs: other pack prompts have ise legs of their own.
+    problems = [p for p in await suite_pack_problems(server, "demo", tmp_path) if "suite_change_check" in p]
     assert problems == [
         "suite prompt suite_change_check: ise leg calls 'ise_snapshot', which the ise manifest does not list",
         "suite prompt suite_change_check: ise leg calls 'ise_compare_snapshot', "
         "which the ise manifest does not list",
     ]
-    assert await suite_pack_problems(server, "demo", tmp_path, pending=SNAPSHOT_TOOLS) == []
+    problems = await suite_pack_problems(server, "demo", tmp_path, pending=SNAPSHOT_TOOLS)
+    assert [p for p in problems if "suite_change_check" in p] == []
 
 
 SUITE = Path(__file__).resolve().parents[3]
@@ -419,7 +422,7 @@ async def test_pack_against_suite_checkout_manifests() -> None:
         pytest.skip("no sibling server checkouts with manifests")
     server = _suite_server()
     present = {p.stem for p in paths}
-    pending = [t for t in SNAPSHOT_TOOLS if t.split("_", 1)[0] in present]
+    pending = [t for t in (*SNAPSHOT_TOOLS, *PENDING_TOOLS) if t.split("_", 1)[0] in present]
     problems = await suite_pack_problems(server, "demo", *paths, pending=pending)
     # A waiver for a tool a server now ships is reported: that is the signal to drop it here.
     assert all("is in `pending` but" in p for p in problems), problems

@@ -72,7 +72,12 @@ PEERS: dict[str, str] = {
     "sna": "Secure Network Analytics",
     "nso": "Network Services Orchestrator",
     "cnc": "Crosswork Network Controller",
+    "win": "Windows Server (Active Directory)",
 }
+
+# Server names that don't reduce to their prefix ('Windows_Server' -> 'win'), after lower-casing and
+# dropping '-mcp-server', '-mcp', '-' and '_'.
+PEER_ALIASES: dict[str, str] = {"windowsserver": "win", "windows": "win"}
 
 SERVERS_DOC = (
     "Servers connected in this client, comma-separated prefixes or server names (e.g. 'catsdwan,ise' or "
@@ -183,7 +188,7 @@ def parse_servers(servers: str | None) -> set[str] | None:
         if not raw:
             continue
         name = raw.removesuffix("-mcp-server").removesuffix("-mcp").replace("-", "").replace("_", "")
-        out.add(name)
+        out.add(PEER_ALIASES.get(name, name))
     return out or None
 
 
@@ -324,4 +329,8 @@ def _field_description(annotation: Any) -> str:
 
 
 # The pack's prompts register themselves into PACK on import.
-from stutters_mcp_core.suite import asbuilt_drift, change_check  # noqa: E402, F401
+from stutters_mcp_core.suite import (  # noqa: E402, F401
+    access_review,
+    asbuilt_drift,
+    change_check,
+)
