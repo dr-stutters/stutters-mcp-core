@@ -3,7 +3,13 @@
 A server rail set in the environment (CML's L20 `CML_MANAGED_LABS` / `CML_PROTECTED_LABS`, say) can only be
 changed by editing settings and restarting. An override lets an operator widen it at runtime **for a bounded
 time, with a reason, through a previewed and (by default) two-person-approved tool**, and it lapses on its
-own. It weakens the rail by design, so it is OFF unless the operator turns it on:
+own. It weakens the rail by design, so it is OFF unless the operator turns it on.
+
+Overrides are **add only** (owner decision 2026-10-24, "Add labs only"): an override can only add entries to
+the lists the server names in `addable` (CML: managed lab globs). It can never remove or change anything
+else, and never lift a protected entry: a request naming another list, or adding an entry that overlaps a
+`protected` pattern, is refused in the preview. Lifting a protection means editing settings and restarting.
+
 
     MCP_RUNTIME_OVERRIDES=true           allow override tools to set anything (default false)
     MCP_OVERRIDE_MAX_MINUTES=240         longest window one override may ask for (1..1440)
@@ -18,7 +24,8 @@ Core owns the primitive; a server owns the meaning of the values. In a server's 
     async def cml_set_lab_scope(ctx, managed: list[str], until: str, reason: str, confirm: Confirm = None):
         return await set_override(ctx, tool="cml_set_lab_scope", scope="lab_scope",
                                   values={"managed": managed}, until=until, reason=reason, confirm=confirm,
-                                  current={"managed": settings_patterns})
+                                  addable=["managed"], protected=protected_patterns,
+                                  current={"managed": managed_patterns, "protected": protected_patterns})
 
     # wherever the rail is checked:
     ov = active_override(ctx, "lab_scope")
@@ -31,6 +38,7 @@ instance. Setting, clearing and lapsing are audit events (`override_set`, `overr
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 from collections.abc import Callable, Iterable, Mapping
@@ -50,6 +58,7 @@ __all__ = [
     "Override",
     "OverrideStore",
     "active_override",
+    "add_only_problems",
     "clear_override",
     "get_overrides",
     "parse_until",
@@ -181,6 +190,39 @@ def active_override(ctx: Context, scope: str) -> Override | None:
     return store.get(_key(scope))
 
 
+def add_only_problems(
+    values: Mapping[str, Any], addable: Iterable[str], protected: Iterable[str]
+) -> list[str]:
+    """Why `values` is not a pure addition (owner decision C70: add only), or [] when it is.
+
+    Every key must be one of `addable`, every value a list of non-empty strings, and no added entry may
+    overlap a `protected` pattern (either matches the other as a case-insensitive glob), so an override
+    can never lift a protection."""
+    allowed = list(addable)
+    shielded = [str(q) for q in protected if str(q).strip()]
+    problems: list[str] = []
+    for key, entries in values.items():
+        if key not in allowed:
+            problems.append(
+                f"{key!r} can't be changed at runtime: overrides only add {', '.join(map(repr, allowed))} "
+                "entries and can never lift a protected entry or narrow a rail (edit the settings and "
+                "restart instead)."
+            )
+            continue
+        if not isinstance(entries, list) or not all(isinstance(e, str) and e.strip() for e in entries):
+            problems.append(f"{key!r} must be a list of non-empty strings to add")
+            continue
+        for entry in entries:
+            for q in shielded:
+                a, b = entry.strip().lower(), q.lower()
+                if fnmatch.fnmatchcase(b, a) or fnmatch.fnmatchcase(a, b):
+                    problems.append(
+                        f"{entry!r} overlaps the protected entry {q!r}: an override can never lift a "
+                        "protection (edit the settings and restart instead)."
+                    )
+    return problems
+
+
 def parse_until(text: str, now: datetime, max_duration: timedelta) -> datetime:
     """`until` as a duration from now ("30m", "2h", "1h30m") or an ISO 8601 time (no zone = UTC).
     Raises ValueError when it is unreadable, not in the future, or longer than `max_duration`."""
@@ -214,12 +256,16 @@ async def set_override(
     until: str,
     reason: str,
     confirm: str | None,
+    addable: Iterable[str],
+    protected: Iterable[str] = (),
     current: Mapping[str, Any] | None = None,
     blockers: Iterable[str] = (),
     args: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preview, then (after confirm, by a second caller when MCP_OVERRIDE_TWO_PERSON) set an override.
 
+    Add only: `values` maps each list in `addable` to the entries to add to it; any other key, or an entry
+    overlapping a `protected` pattern, blocks the preview (an override never lifts a protection).
     `current` is the rail as configured (shown next to the override in the preview); `blockers` are the
     server's own checks on `values`; `args` are the tool's arguments except `confirm` (defaults to
     values/until/reason). A duration `until` counts from the confirm, not the preview."""
@@ -242,8 +288,9 @@ async def set_override(
     reason = (reason or "").strip()
     if len(reason) < MIN_REASON:
         problems.append(f"reason is required (at least {MIN_REASON} characters): say why and for what work")
-    if not values:
+    if not values or not any(values.values()):
         problems.append("nothing to override: values is empty")
+    problems.extend(add_only_problems(values, addable, protected))
     existing = store.get(key)
     details: dict[str, Any] = {
         "scope": key,
@@ -264,8 +311,8 @@ async def set_override(
         fingerprint={"existing": existing.set_at.isoformat() if existing else None},
         blockers=problems,
         side_effects=[
-            "Weakens a safety rail for this window: the server's checks use the override's values until "
-            "it lapses, is cleared, or the server restarts."
+            "Weakens a safety rail for this window: the server's checks add the override's entries until "
+            "it lapses, is cleared, or the server restarts (protected entries stay protected)."
         ],
         two_person=store.two_person,
     )

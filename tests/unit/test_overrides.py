@@ -17,6 +17,7 @@ from stutters_mcp_core import overrides as ov_mod
 from stutters_mcp_core.overrides import (
     OverrideStore,
     active_override,
+    add_only_problems,
     clear_override,
     parse_until,
     set_override,
@@ -29,6 +30,7 @@ from .demo import BASE, make_settings
 T0 = datetime(2026, 10, 24, 3, 0, tzinfo=UTC)
 ON = {"mcp_enable_writes": True, "mcp_runtime_overrides": True}
 CONFIGURED = ["mcp-*"]
+PROTECTED = ["prod-core", "shared-*"]
 
 
 @pytest.fixture
@@ -61,20 +63,30 @@ def register(reg: ToolRegistrar) -> None:
         managed: Annotated[list[str], Field(description="Extra managed lab globs")],
         until: Annotated[str, Field(description="Duration (30m, 2h) or ISO time")],
         reason: Annotated[str, Field(description="Why, and for what work")],
+        unprotect: Annotated[
+            list[str] | None, Field(description="Protected globs to lift (always refused: add only)")
+        ] = None,
         confirm: Confirm = None,
     ) -> dict[str, Any]:
         """Widen the managed scope for a while (demo consumer of the override primitive)."""
+        values: dict[str, Any] = {"managed": managed}
+        args: dict[str, Any] = {"managed": managed, "until": until, "reason": reason}
+        if unprotect is not None:
+            values["protected"] = unprotect
+            args["unprotect"] = unprotect
         return await set_override(
             ctx,
             tool="demo_set_scope",
             scope="lab_scope",
-            values={"managed": managed},
+            values=values,
             until=until,
             reason=reason,
             confirm=confirm,
+            addable=["managed"],
+            protected=PROTECTED,
             current={"managed": CONFIGURED},
             blockers=["'*' would manage every lab"] if "*" in managed else [],
-            args={"managed": managed, "until": until, "reason": reason},
+            args=args,
         )
 
     @reg.write(title="Clear the scope override")
@@ -200,6 +212,41 @@ async def test_blockers(api: Any, clock: Clock) -> None:
         and "more than 60 minutes" in text
         and "reason is required" in text
     )
+
+
+async def test_add_only_adds_managed_globs(api: Any, clock: Clock) -> None:
+    async with Client(server(**ON, mcp_override_two_person=False)) as c:
+        args = {**ARGS, "managed": ["lab-x", "w7-*"]}
+        prev = (await c.call_tool("demo_set_scope", args)).structured_content
+        assert prev["status"] == "preview" and not prev.get("blockers")
+        done = (await c.call_tool("demo_set_scope", {**args, "confirm": prev["confirm"]})).structured_content
+        assert done["status"] == "applied" and done["result"]["values"] == {"managed": ["lab-x", "w7-*"]}
+        eff = (await c.call_tool("demo_effective_scope", {})).structured_content
+        assert eff == {"managed": ["mcp-*", "lab-x", "w7-*"]}
+
+
+async def test_add_only_never_lifts_a_protected_lab(api: Any, clock: Clock) -> None:
+    async with Client(server(**ON, mcp_override_two_person=False)) as c:
+        # asking to lift a protection is refused in the preview, with the reason
+        lift = (await c.call_tool("demo_set_scope", {**ARGS, "unprotect": ["prod-core"]})).structured_content
+        assert lift["status"] == "blocked" and "confirm" not in lift
+        assert any(
+            "'protected' can't be changed at runtime" in b and "never lift a protected entry" in b
+            for b in lift["blockers"]
+        )
+        # so is a managed glob that would reach a protected lab (either glob matching the other)
+        for glob in ["prod-*", "PROD-CORE", "shared-lab1", "*"]:
+            prev = (await c.call_tool("demo_set_scope", {**ARGS, "managed": [glob]})).structured_content
+            assert prev["status"] == "blocked", glob
+            assert any("overlaps the protected entry" in b for b in prev["blockers"]), glob
+        assert (await c.call_tool("demo_effective_scope", {})).structured_content == {"managed": ["mcp-*"]}
+
+
+def test_add_only_problems() -> None:
+    assert add_only_problems({"managed": ["lab-x"]}, ["managed"], PROTECTED) == []
+    assert "list of non-empty strings" in add_only_problems({"managed": "lab-x"}, ["managed"], [])[0]
+    assert "list of non-empty strings" in add_only_problems({"managed": [" "]}, ["managed"], [])[0]
+    assert "can't be changed at runtime" in add_only_problems({"protected": []}, ["managed"], [])[0]
 
 
 async def test_store_without_build_server(clock: Clock) -> None:

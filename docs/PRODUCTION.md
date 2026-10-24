@@ -70,15 +70,21 @@ or rejected);
 Some servers have rails of their own in settings (CML's `CML_MANAGED_LABS` / `CML_PROTECTED_LABS`, L20).
 Changing those normally means editing the environment and restarting. With overrides on, a server tool
 (the first is `cml_set_lab_scope`) can widen such a rail **for a bounded time**. This weakens the rail by
-design, so it is off unless you turn it on:
+design, so it is off unless you turn it on.
+
+Overrides are **add only** (owner decision 2026-10-24): an override can only add entries to the lists the
+server allows (CML: managed lab globs). It can never lift a protected lab: a request to remove or change a
+protected entry, or a new entry that overlaps a protected pattern (either glob matching the other, so `*`
+or `prod-*` next to a protected `prod-core`), is refused in the preview with the reason. To lift a
+protection, edit the settings and restart.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `MCP_RUNTIME_OVERRIDES` | `false` | Override tools preview, but are blocked until this is `true`. |
 | `MCP_OVERRIDE_MAX_MINUTES` | `240` | The longest window one override may ask for (1..1440). |
-| `MCP_OVERRIDE_TWO_PERSON` | `true` | A **different** caller must confirm an override (`<prefix>_review_change` is registered). Set `false` for a single-user stdio server, where every caller is `local`. |
+| `MCP_OVERRIDE_TWO_PERSON` | `true` | A **different** caller must confirm an override (`<prefix>_review_change` is registered). `false` is the escape for a single-user stdio server, where every caller is `local` and nobody else could approve; keep `true` on any shared HTTP deployment. |
 
-- Every override has a scope (one per scope and instance), values (the server decides what they mean), an
+- Every override has a scope (one per scope and instance), values (entries to add, per list), an
   `until` (`30m`, `2h`, `1h30m`, or an ISO 8601 time; a duration counts from the confirm) and a reason (at
   least 8 characters).
 - The preview shows the configured rail next to the override, any override it replaces, and a side effect
@@ -91,7 +97,8 @@ design, so it is off unless you turn it on:
   `override_expired`.
 
 For server builders: `stutters_mcp_core.overrides.set_override(ctx, tool=, scope=, values=, until=, reason=,
-confirm=, current=, blockers=)` in a write tool, `clear_override(...)` in another, and
+confirm=, addable=, protected=, current=, blockers=)` in a write tool (`addable`: the lists an override may
+add to; `protected`: the patterns it must never reach; keep protected checked first in the rail itself), `clear_override(...)` in another, and
 `active_override(ctx, scope)` wherever the rail is checked. `Plan(two_person=True)` forces a second caller
 for any write.
 
