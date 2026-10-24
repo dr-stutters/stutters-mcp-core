@@ -41,7 +41,10 @@ def test_offset_from_date_header() -> None:
     assert clock.sample_for("https://ISE.example") == s
 
 
-@pytest.mark.parametrize("header", [None, "", "not a date", "Mon, 99 Foo 2026 25:61:00 GMT"])
+@pytest.mark.parametrize(
+    "header",
+    [None, "", "not a date", "Mon, 99 Foo 2026 25:61:00 GMT", "x, 99999999999 Jan 2026 00:00:00 GMT"],
+)
 def test_unreadable_date_is_ignored(header: str | None) -> None:
     assert clock.observe("https://x.example", header, sent=1.0, received=2.0) is None
     assert clock.sample_for("https://x.example") is None

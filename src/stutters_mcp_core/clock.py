@@ -75,7 +75,7 @@ def observe(url: str, date_header: str | None, *, sent: float, received: float) 
         return None
     try:
         when = email.utils.parsedate_to_datetime(date_header)
-    except (TypeError, ValueError, IndexError):
+    except (TypeError, ValueError, IndexError, OverflowError):
         return None
     if when.tzinfo is None:  # RFC 7231 says GMT; a naive parse means "-0000": treat it as UTC
         when = when.replace(tzinfo=UTC)
@@ -94,8 +94,12 @@ def observe(url: str, date_header: str | None, *, sent: float, received: float) 
 
 
 def observe_response(url: str, headers: Any, *, sent: float, received: float | None = None) -> None:
-    """`observe` from a response's headers (anything with `.get`); used by ApiClient."""
-    observe(url, headers.get("Date"), sent=sent, received=time.time() if received is None else received)
+    """`observe` from a response's headers (anything with `.get`); used by ApiClient. A passive
+    measurement: nothing about a response's Date header may fail the request it came with."""
+    try:
+        observe(url, headers.get("Date"), sent=sent, received=time.time() if received is None else received)
+    except Exception:  # noqa: BLE001 - see the docstring
+        return
 
 
 def sample_for(url: str) -> ClockSample | None:
