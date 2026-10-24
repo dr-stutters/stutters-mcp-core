@@ -262,6 +262,15 @@ it with `assert_suite_pack(server_rw, "<prefix>", "tests/manifests", pending=[..
 client keeps (no server state). Build them with `snapshot.register_snapshot_tools(reg, take, ...)`; the
 contract (blob schema, item and metric rules, severities) is [SNAPSHOTS.md](SNAPSHOTS.md).
 
+### Topology diagrams (C65)
+
+A tool that draws a topology takes `format: Literal["mermaid", "drawio"]` (alongside `response_format` for
+the data) and returns `render.diagram_result(graph, format, host="<server name>")`. Build the
+`render.Graph` from what the tool already summarised: `Node(id, lines=[...], group=<site>, shape=...,
+status="ok"|"warn"|"down")` and `Edge(a, b, label=..., status=...)`, or pass the same structure as dicts.
+Groups become Mermaid subgraphs and draw.io containers; nodes with `x`/`y` keep their positions. Don't write
+a renderer in the server.
+
 **Logs and events:** servers are pull-only (ADR-003). Expose a platform's logs and events as ordinary read
 tools that query the platform when called; don't add listeners, background pollers or buffers.
 
