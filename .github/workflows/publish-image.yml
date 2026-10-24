@@ -23,6 +23,10 @@ name: publish-image
 on:
   workflow_call:
     inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+        description: "runs-on label: ubuntu-latest (GitHub-hosted) or self-hosted (a runner the repository registered, e.g. for a private repo without Actions minutes)."
       command:
         type: string
         default: ""
@@ -60,7 +64,7 @@ permissions:
 
 jobs:
   image:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     outputs:
       image: ${{ steps.meta.outputs.image }}
       digest: ${{ steps.build.outputs.digest }}
