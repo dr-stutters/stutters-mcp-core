@@ -256,6 +256,12 @@ Every server registers the whole pack by adding `suite.register` to `build_serve
 it with `assert_suite_pack(server_rw, "<prefix>", "tests/manifests", pending=[...])`. See
 [SUITE-PROMPTS.md](SUITE-PROMPTS.md).
 
+### Snapshots for change checks (C53)
+
+`<prefix>_snapshot` / `<prefix>_compare_snapshot` return and compare a compact, versioned health blob that the
+client keeps (no server state). Build them with `snapshot.register_snapshot_tools(reg, take, ...)`; the
+contract (blob schema, item and metric rules, severities) is [SNAPSHOTS.md](SNAPSHOTS.md).
+
 **Logs and events:** servers are pull-only (ADR-003). Expose a platform's logs and events as ordinary read
 tools that query the platform when called; don't add listeners, background pollers or buffers.
 

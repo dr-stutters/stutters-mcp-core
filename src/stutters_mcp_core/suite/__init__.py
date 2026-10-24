@@ -321,3 +321,7 @@ def _field_description(annotation: Any) -> str:
         if desc:
             return str(desc)
     return ""
+
+
+# The pack's prompts register themselves into PACK on import.
+from stutters_mcp_core.suite import change_check  # noqa: E402, F401
