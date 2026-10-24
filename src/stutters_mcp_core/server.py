@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from stutters_mcp_core import __version__, metrics
 from stutters_mcp_core.audit import AuditMiddleware
+from stutters_mcp_core.clock import clock_status
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
 from stutters_mcp_core.inbound_auth import current_caller
@@ -73,6 +74,9 @@ class ServerSpec:
     # Product-specific examples for the spec tools' descriptions (neutral text when unset).
     spec_search_example: str | None = None
     spec_path_example: str | None = None
+    # How the product's own logs and events stamp time, for <prefix>_status's clock block (C69), e.g.
+    # "MnT: appliance local time, no zone"; core's tool convention is always reported.
+    log_timestamps: str | None = None
 
 
 ClientFactory = Callable[[Any], Any]
@@ -337,6 +341,7 @@ def _register_status(
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
             **target_info,
         }
+        out["server"]["clock"] = clock_status(target_cfg.url, product_convention=spec.log_timestamps)
         from stutters_mcp_core.mock import detect  # here: `python -m stutters_mcp_core.mock` stays clean
 
         demo = await detect(target_cfg.url)  # offline demo mode (C64): plain-HTTP URLs only

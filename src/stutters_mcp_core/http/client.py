@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 import httpx
 
-from stutters_mcp_core import __version__, metrics
+from stutters_mcp_core import __version__, clock, metrics
 from stutters_mcp_core.errors import (
     AuthError,
     Conflict,
@@ -155,6 +155,7 @@ class ApiClient:
         async with self.limiter.slot():
             started = time.monotonic()
             metrics.record_rate_wait(self.product, started - waited)
+            sent = time.time()
             try:
                 resp = await self._http.request(method, self._url(path), **kwargs)
             except httpx.TimeoutException:
@@ -164,6 +165,7 @@ class ApiClient:
                 metrics.record_upstream(self.product, method, "error", time.monotonic() - started)
                 raise
             metrics.record_upstream(self.product, method, str(resp.status_code), time.monotonic() - started)
+            clock.observe_response(self.base_url, resp.headers, sent=sent)  # appliance clock offset (C69)
             return resp
 
     def _unreachable(self, e: Exception) -> Unreachable:
