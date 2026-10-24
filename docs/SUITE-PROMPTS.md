@@ -12,6 +12,7 @@ sees the same `suite_*` prompt from each one; any copy renders the same text.
 |---|---|---|---|---|
 | `suite_change_check(site, phase, change, before, servers)` | C53 | catsdwan, ise, catc, fmc | read | phase=pre: `<prefix>_snapshot` per connected server, blobs kept in the conversation; phase=post: `<prefix>_compare_snapshot` per server, one table by severity with expected effects apart, verdict "nothing else changed" or the unexpected changes ([SNAPSHOTS.md](SNAPSHOTS.md)) |
 | `suite_asbuilt_drift(site, device, checks, servers)` | C62 | netbox, catc | read | NetBox interfaces, VLANs and cables (intent) vs Catalyst Center interfaces, VLANs and CDP/LLDP links (as built) for one site; one table per check with the side to fix (NetBox, network, site visit) and the fix proposed, not applied; with only one of the two servers connected it says there is nothing to compare and stops |
+| `suite_access_review(stale_days, scope, servers)` | C63 | ise, catc, fmc, catsdwan, cml, win | read | Who can change what: admin accounts, roles and the external groups granting them on each platform, AD resolving those groups to people; one table by person and a findings list (generic/extra local admins, stale or AD-disabled people still privileged, broad groups, no local fallback). Leg tools still to ship: `suite.access_review.PENDING_TOOLS` |
 
 Planned: C51 `suite_maintenance_window`; later waves C46, C47, C49, C50, C52.
 
@@ -22,7 +23,7 @@ Planned: C51 `suite_maintenance_window`; later waves C46, C47, C49, C50, C52.
   read), with `"suite": true` and every leg tool under `tools`.
 - **Absent servers.** A server cannot see which other servers the client has connected, so every suite prompt
   takes a `servers` argument: comma-separated prefixes or server names (`catsdwan,ise`,
-  `cat-sdwan-mcp-server, ise-mcp-server`).
+  `cat-sdwan-mcp-server, ise-mcp-server`; the Windows MCP's `Windows_Server` is the `win` peer).
   - Given: the body holds only the connected legs. Its first lines name every skipped leg and what is
     therefore not checked (`catc leg skipped: server not connected; not checked: device and site health.`),
     and the model repeats that at the top of its answer.
