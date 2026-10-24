@@ -118,7 +118,12 @@ class ToolRegistrar:
         withheld: dict[str, Tier] = getattr(mcp, "_stutters_withheld", {})
         mcp._stutters_withheld = withheld  # type: ignore[attr-defined]
         self.withheld = withheld  # tools MCP_DENY_TOOLS / MCP_ALLOW_TOOLS kept out
-        self.core_tools = {f"{prefix}_status", f"{prefix}_review_change"}  # never withheld
+        self.core_tools = {  # never withheld
+            f"{prefix}_status",
+            f"{prefix}_review_change",
+            f"{prefix}_list_pending_changes",
+            f"{prefix}_cancel_pending_change",
+        }
         self.target_names: list[str] = settings.target_names()  # >1: tools get an `instance` argument
         task_tools: set[str] = getattr(mcp, "_stutters_task_tools", set())
         mcp._stutters_task_tools = task_tools  # type: ignore[attr-defined]
@@ -360,6 +365,31 @@ class PreviewStore:
     def remaining(self, pending: _Pending) -> int:
         return max(0, int(pending.expires - time.monotonic()))
 
+    def preview_id(self, token: str) -> str:
+        """A stable public id for a pending change (C66): lets callers list and cancel it without the
+        listing handing out confirm tokens. Keyed digest of the token, so it can't be reversed."""
+        return "pc_" + hmac.new(_DIGEST_KEY, token.encode(), hashlib.sha256).hexdigest()[:12]
+
+    def awaiting_approval(self) -> list[tuple[str, _Pending]]:
+        """Unexpired two-person changes waiting for a second person, soonest to expire first."""
+        self._purge()
+        waiting = [(t, p) for t, p in self._pending.items() if p.two_person]
+        return sorted(waiting, key=lambda tp: tp[1].expires)
+
+    def find(self, ref: str) -> tuple[str, _Pending] | None:
+        """(token, pending) for a confirm token or a preview id, without consuming it."""
+        self._purge()
+        if ref in self._pending:
+            return ref, self._pending[ref]
+        for token, pending in self._pending.items():
+            if hmac.compare_digest(self.preview_id(token), ref):
+                return token, pending
+        return None
+
+    def cancel(self, token: str) -> _Pending | None:
+        """Drop a pending change so its token can no longer be confirmed."""
+        return self._pending.pop(token, None)
+
     def redeem(self, token: str, tool: str, args: dict[str, Any], fingerprint: Any, caller: str) -> _Pending:
         """Consume a token or raise explaining why it can't be used. Any mismatch also burns the
         token, so a fresh preview is always required afterwards.
@@ -498,9 +528,11 @@ async def preview_or_apply(
         out["confirm"] = token
         out["expires_in_seconds"] = int(store.ttl)
         if two_person:
+            out["preview_id"] = store.preview_id(token)
             out["how_to_apply"] = (
                 "Nothing has been changed. This change needs TWO-PERSON approval: a different user must "
-                f"review it (`{tool.split('_', 1)[0]}_review_change` with this token shows the preview) and "
+                f"review it (`{tool.split('_', 1)[0]}_review_change` with this token or the preview id "
+                "shows the preview) and "
                 f'then call {tool} with exactly the same arguments plus confirm="{token}". '
                 "The requester can't confirm it."
             )
@@ -514,7 +546,9 @@ async def preview_or_apply(
         pending = store.peek(token)
         if pending is not None and two_person:
             pending.preview = {
-                k: v for k, v in out.items() if k not in ("confirm", "how_to_apply", "expires_in_seconds")
+                k: v
+                for k, v in out.items()
+                if k not in ("confirm", "how_to_apply", "expires_in_seconds", "preview_id")
             }
             pending.preview = mask_secrets(pending.preview)
             pending.preview["args"] = _shown_args(args)
