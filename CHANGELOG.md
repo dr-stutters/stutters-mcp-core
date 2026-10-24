@@ -6,6 +6,55 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-24
+
+### Added
+- Shared Mermaid/draw.io topology renderer (C65, #117): `stutters_mcp_core.render` (Graph/Node/Edge, groups,
+  status colours, `render` / `diagram_result`).
+- Suite pack: `suite_asbuilt_drift(site, device, checks, servers)` (C62, #114) compares one site's NetBox
+  interfaces, VLANs and cables with Catalyst Center's interfaces, VLANs and CDP/LLDP topology and reports each
+  difference with the side to fix.
+- Suite pack: `suite_access_review(stale_days, scope, servers)` (C63, #115) reviews who can change what on ISE,
+  Catalyst Center, FMC, SD-WAN Manager and CML, with Active Directory resolving admin groups to people; new suite
+  peer `win` (Windows MCP).
+- Offline demo mode (C64, #116): `stutters_mcp_core.mock` records a storyline's reads through a scrubbing reverse
+  proxy and replays them from a query-aware mock (routes.json v2, v1 still read); `<prefix>_status` shows
+  `mode: mock`, the storyline and the capture date.
+- `<prefix>_list_pending_changes` and `<prefix>_cancel_pending_change` for two-person approvals (C66, #118).
+- `MCP_CONFIRM_MODE=token|elicit|auto` (C67, #119): confirm previewed changes in the client's elicitation dialog
+  when it supports it; optional `replan=` on `preview_or_apply` for a fingerprint re-check.
+- Argument vocabulary lint (C68, #120): `stutters_mcp_core.vocabulary`, `testing.warn_vocabulary` /
+  `vocabulary_problems` (findings as warnings, never failures) and docs/VOCABULARY.md (the suite's argument
+  names and the rename-with-deprecated-alias pattern).
+- Appliance clock offset (C69, #121): `stutters_mcp_core.clock` helpers and `ServerSpec(log_timestamps=...)` to
+  document the product's own timestamps.
+- Runtime, time-boxed rail overrides (C70, #122): `stutters_mcp_core.overrides` (`set_override` /
+  `clear_override` / `active_override`; add only, never lifts a protected entry; preview-first, reason required,
+  capped by `MCP_OVERRIDE_MAX_MINUTES`, two-person by default, lapses on its own, audited, listed in
+  `<prefix>_status`), off unless `MCP_RUNTIME_OVERRIDES=true`; `Plan(two_person=True)` forces a second caller for
+  any write.
+
+### Changed
+- Every `<prefix>_status` reports `server.clock` (offset from the HTTP Date header with uncertainty,
+  ok/ahead/behind and a warning past 5 s, and the timestamp convention) (C69).
+- `<prefix>_review_change` accepts preview ids (C66).
+
+### Adopting
+- With the core pin bump and no server code: `server.clock` and `mode: mock` in status, the two-person list/cancel
+  tools wherever two-person confirm is configured, and `MCP_CONFIRM_MODE` (operator setting).
+- Each server then sets `ServerSpec(log_timestamps=...)` for its product (ISE MnT/ERS stamps, Catalyst Center
+  epoch ms, SD-WAN `entry_time` epoch ms, FMC audit epoch s, CML ISO); a server whose status does not use
+  `ApiClient` calls `clock.observe(...)` itself. The timeline prompts read `server.clock.offset_seconds`.
+- Suite pack (C62, C63): commit the new prompt snapshot file; for C63 the `assert_suite_pack` call adds
+  `pending=[...]` for its own and its peers' unshipped tools.
+- Vocabulary (C68): add `await warn_vocabulary(server_rw, "<prefix>", allow={...})` to the contract test, then
+  rename per docs/VOCABULARY.md.
+- Renderer (C65): catc `catc_get_physical_topology(format=)`, fmc `fmc_get_vpn_topology(format=)` and
+  `fmc_sdwan_status(format=)`, cat-sdwan `catsdwan_topology(format=)`.
+- Demo mode (C64): each server records one storyline into `examples/demo/<storyline>.json` and replaces
+  `examples/shared-host/mock/appliance.py` with `python -m <pkg>._core.mock serve`.
+- Overrides (C70): cml-mcp-server (L20 `cml_set_lab_scope`).
+
 ## [0.15.0] - 2026-10-24
 
 ### Added
