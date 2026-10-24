@@ -10,6 +10,9 @@
         await assert_prompt_contract(server, prefix="ise", known_prefixes={"cml", "ise", "fmc", "catc"},
                                      samples={"ise_troubleshoot_endpoint_access": {"mac": "0011.2233.4455"}})
 
+    async def test_vocabulary():                 # argument names vs docs/VOCABULARY.md, as warnings
+        await warn_vocabulary(server, "ise", allow={"ise_export_config.format"})
+
     async def test_prompt_snapshots():           # rendered prompts match tests/snapshots/prompts/*.md
         await assert_prompt_snapshots(server, "tests/snapshots/prompts", samples=SAMPLES)
 
@@ -53,6 +56,7 @@ from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, 
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt
 from stutters_mcp_core.suite import PEERS as SUITE_PEERS
+from stutters_mcp_core.vocabulary import vocabulary_problems, warn_vocabulary
 
 __all__ = [
     "as_caller",
@@ -77,6 +81,8 @@ __all__ = [
     "render_prompts",
     "suite_pack_problems",
     "tool_contract_problems",
+    "vocabulary_problems",
+    "warn_vocabulary",
 ]
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
