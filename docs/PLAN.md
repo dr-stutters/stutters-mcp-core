@@ -91,6 +91,7 @@ stutters_mcp_core/
   redact.py        secret/PII redaction for logs and errors
   suite/           suite_* prompt pack every server registers (C48, docs/SUITE-PROMPTS.md)
   clock.py         appliance clock offset from the HTTP Date header, timestamp convention (C69)
+  overrides.py     runtime, time-boxed overrides of a server's own rails, two-person (C70, PRODUCTION.md)
   snapshot.py      snapshot contract: blob builder, parse, compare, <prefix>_snapshot tools (C53, docs/SNAPSHOTS.md)
   vocabulary.py    argument vocabulary lint, warnings only (C68, docs/VOCABULARY.md)
   testing/

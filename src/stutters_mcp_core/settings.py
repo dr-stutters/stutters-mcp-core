@@ -236,6 +236,12 @@ class BaseServerSettings(BaseSettings):
     # (secrets are resolved before this model exists); the field documents it and shows in the model.
     mcp_secret_loaders: str | None = Field(default=None, validation_alias=_alias("MCP_SECRET_LOADERS"))
     mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
+    # Runtime, time-boxed overrides of a server's own rails (C70, stutters_mcp_core.overrides); off.
+    mcp_runtime_overrides: bool = Field(default=False, validation_alias=_alias("MCP_RUNTIME_OVERRIDES"))
+    mcp_override_max_minutes: int = Field(
+        default=240, ge=1, le=1440, validation_alias=_alias("MCP_OVERRIDE_MAX_MINUTES")
+    )
+    mcp_override_two_person: bool = Field(default=True, validation_alias=_alias("MCP_OVERRIDE_TWO_PERSON"))
 
     # --- per-user roles (G2, stutters_mcp_core.roles); off unless MCP_ROLES(_FILE) is set ----
     mcp_roles: str | None = Field(default=None, validation_alias=_alias("MCP_ROLES"))

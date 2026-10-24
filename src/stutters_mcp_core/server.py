@@ -36,6 +36,7 @@ from stutters_mcp_core.clock import clock_status
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
 from stutters_mcp_core.inbound_auth import current_caller
+from stutters_mcp_core.overrides import OverrideStore
 from stutters_mcp_core.pending import register_pending_tools
 from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.prompts import registered_prompts
@@ -178,6 +179,7 @@ def build_server(
                 per_target[name] = await open_target(name, cfg)
             shared: dict[str, Any] = {
                 "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
+                "overrides": OverrideStore.from_settings(settings),
                 "policy": policy,
                 "roles": roles,
                 "confirm_mode": settings.mcp_confirm_mode,  # C67
@@ -255,7 +257,8 @@ def build_server(
     reg = ToolRegistrar(mcp, settings, spec.prefix)
     _register_status(reg, spec, settings, status)
     instance_two_person = any(InstanceRules.from_settings(c).two_person for c in configs.values())
-    if (policy.two_person or instance_two_person) and settings.mcp_enable_writes:
+    override_two_person = settings.mcp_runtime_overrides and settings.mcp_override_two_person
+    if (policy.two_person or instance_two_person or override_two_person) and settings.mcp_enable_writes:
         _register_review(reg, spec)
         register_pending_tools(reg, spec.prefix)  # C66: list / cancel what awaits a second person
     for fn in register:
@@ -385,6 +388,9 @@ def _register_status(
             out["server"]["safety"] = reg.policy.describe()
             if reg.withheld:
                 out["server"]["safety"]["withheld_tools"] = sorted(reg.withheld)
+        overrides = ctx.lifespan_context.get("overrides")
+        if isinstance(overrides, OverrideStore) and (overrides.enabled or overrides.active()):
+            out["server"]["overrides"] = overrides.describe()
         prompts = registered_prompts(reg.mcp)
         if prompts:
             out["server"]["prompts"] = sorted(prompts)

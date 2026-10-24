@@ -303,7 +303,10 @@ class Plan:
 
     `blast_radius`: how many things the change touches (devices deployed to, endpoints affected, rules
     rewritten...), when the tool can count them. Shown in the preview and checked against
-    MCP_MAX_BLAST_RADIUS / MCP_BLAST_RADIUS_OVERRIDES; None means "not counted" and is never limited."""
+    MCP_MAX_BLAST_RADIUS / MCP_BLAST_RADIUS_OVERRIDES; None means "not counted" and is never limited.
+
+    `two_person`: this change always needs a second caller to confirm, whatever MCP_TWO_PERSON_TOOLS
+    says (runtime rail overrides, C70)."""
 
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -311,6 +314,7 @@ class Plan:
     blockers: list[str] = field(default_factory=list)
     side_effects: list[str] = field(default_factory=list)
     blast_radius: int | None = None
+    two_person: bool = False
 
 
 @dataclass
@@ -456,11 +460,11 @@ def _rails(
     info: dict[str, Any] = {}
     blockers = list(plan.blockers)
     refusals: list[str] = []
-    two_person = False
+    two_person = plan.two_person
     if policy is not None and policy.active:
         info, policy_blockers, refusals = policy.for_write(tool, tier, plan.blast_radius)
         blockers += policy_blockers
-        two_person = bool(info.get("two_person"))
+        two_person = two_person or bool(info.get("two_person"))
     instance_settings = ctx.lifespan_context.get("settings")
     if instance_settings is not None:
         rules = InstanceRules.from_settings(instance_settings)
