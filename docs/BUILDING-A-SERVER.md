@@ -371,6 +371,18 @@ The compose file pulls the published image (`ghcr.io/dr-stutters/__SERVER__`, `M
 default `latest`); `docker compose up -d --build` still builds from the checkout. Releases publish the image
 with `publish-image.yml` (§9).
 
+### Offline demo mode (C64)
+
+`stutters_mcp_core.mock` records a storyline's reads from a real appliance and replays them, so a demo runs
+when the lab is down. Recording is a reverse proxy (`python -m <pkg>._core.mock record --upstream https://...
+--out routes.json --storyline NAME --replace LAB=DOC`): point the server's URL at it and run the storyline.
+It forwards GETs and logins only, masks secrets and tokens, and `check` lists anything still looking like lab
+data. Replay: `python -m <pkg>._core.mock serve routes.json` (or the file alone in `python:3.12-slim`, in place
+of the examples' `appliance.py`, whose routes files it still reads), with the server's URL set to the mock.
+`<prefix>_status` then shows `mode: mock`, the storyline and `captured_at`. The production client has no
+replay branch: only the URL changes. Matching is query-aware (most specific query wins; time-window keys in
+`ignore_query` are dropped). Servers' own unit tests can use `MockAppliance(Routes.load(...)).transport()`.
+
 ## 9. CI
 
 ```yaml

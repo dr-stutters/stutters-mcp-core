@@ -337,6 +337,11 @@ def _register_status(
             "tools": {t.value: sum(1 for v in tiers.values() if v is t) for t in Tier},
             **target_info,
         }
+        from stutters_mcp_core.mock import detect  # here: `python -m stutters_mcp_core.mock` stays clean
+
+        demo = await detect(target_cfg.url)  # offline demo mode (C64): plain-HTTP URLs only
+        if demo:
+            out["server"].update(demo)
         roles = ctx.lifespan_context.get("roles")
         if roles is not None:
             out["server"]["access"] = roles.describe(current_caller())
