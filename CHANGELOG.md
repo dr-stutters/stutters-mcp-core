@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-25
+
+### Changed
+- CI: the reusable workflows (python-ci, bundle-core, python-release, publish-image) take `runner` (default
+  `ubuntu-latest`), so a private repository without GitHub Actions minutes can run them on its own self-hosted runner
+  (#145). Existing callers are unchanged.
+
 ## [0.16.0] - 2026-10-24
 
 ### Added
