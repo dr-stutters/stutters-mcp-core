@@ -24,9 +24,7 @@ from .demo import BASE, SPEC, DemoApp, make_settings
 # --- the key regex ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "key", ["reg_key", "regKey", "registration_key", "registrationKey", "nat_id", "natID"]
-)
+@pytest.mark.parametrize("key", ["reg_key", "regKey", "RegKey", "nat_id", "natID"])
 def test_new_secret_keys(key: str) -> None:
     assert is_secret_key(key)
 
@@ -36,6 +34,15 @@ def test_new_secret_keys(key: str) -> None:
 )
 def test_keys_that_stay_visible(key: str) -> None:
     assert not is_secret_key(key)  # a BGP route's `community` in a response is not a secret
+
+
+@pytest.mark.parametrize("key", ["registration_key", "registrationKey"])
+def test_registration_key_stays_visible(key: str) -> None:
+    # fmc previews show `registration_key: 'from FMC_FTD_REG_KEY'`: a source label, not the key itself
+    # (fmc's own _mask_registration_keys leaves it visible); the secret travels as `reg_key`.
+    assert not is_secret_key(key)
+    out = redact_args({key: "from FMC_FTD_REG_KEY", "reg_key": "cisco123", "regKey": "c1", "nat_id": "n1"})
+    assert out == {key: "from FMC_FTD_REG_KEY", "reg_key": MASK, "regKey": MASK, "nat_id": MASK}
 
 
 def test_redact_args_masks_ftd_registration_and_snmp_community() -> None:

@@ -26,7 +26,7 @@ SECRET_KEY_RE = re.compile(
     r"auth_?key|authentication_?key|md5_?key|key_?string|priv_?key|api_?key|shared_?key|encryption_?key|"
     r"message_?authenticator|^token$|auth_?token|access_?token|refresh_?token|x-auth|"
     r"snmp\w*community|community_?(string|name)|r[ow]_?community|(read|write)_?community|"
-    r"reg_?key|registration_?key|nat_?id)",
+    r"reg_?key|nat_?id)",
     re.IGNORECASE,
 )
 MASK = "********"
