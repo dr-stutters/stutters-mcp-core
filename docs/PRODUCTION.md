@@ -42,7 +42,9 @@ selectors `@read`, `@write`, `@dangerous`. `<prefix>_status` and the two-person 
 
 **Blast radius.** A write tool sets `Plan(blast_radius=N)` when it can count what a change touches
 (devices a deploy goes to, endpoints affected, rules rewritten). It is shown in the preview. Tools that
-don't count are never limited; each server's README says which tools report it.
+don't count are never limited; each server's README says which tools report it. A dangerous tool that
+can't count states why instead (`blast_unknown: not counted (<reason>)` in the preview, the audit event and
+the two-person listing), so an operator who set the limit sees which changes it can't check.
 
 **Two-person confirm.** The requester previews as usual and gets a token, but can't redeem it. They pass
 the token to a second person (another named bearer token or OAuth identity), whose client calls

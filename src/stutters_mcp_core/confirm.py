@@ -114,6 +114,8 @@ def elicit_message(tool: str, preview: dict[str, Any], shown_args: dict[str, Any
         lines.append(f"Instance: {preview['instance']}")
     if preview.get("blast_radius") is not None:
         lines.append(f"Blast radius: {preview['blast_radius']}")
+    elif preview.get("blast_unknown"):
+        lines.append(f"Blast radius: {preview['blast_unknown']}")
     for effect in preview.get("side_effects") or []:
         lines.append(f"Side effect: {effect}")
     if preview.get("warning"):
