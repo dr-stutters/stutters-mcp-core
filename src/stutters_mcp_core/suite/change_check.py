@@ -1,4 +1,7 @@
-"""`suite_change_check` (roadmap C53): pre/post change check across products with the snapshot contract."""
+"""`suite_change_check` (roadmap C53, C78): pre/post change check across products with the snapshot contract.
+
+Post phase passes the change's own configuration objects to each compare as `expected` (snapshot schema 2), so
+a configuration object that changed outside the change is reported apart from the change itself."""
 
 from typing import Annotated
 
@@ -34,7 +37,7 @@ LEGS = (
 @suite_prompt(
     title="Change check across products (pre/post)",
     legs=LEGS,
-    example={"site": "br1", "phase": "post", "change": "banner change on br1"},
+    example={"site": "br1", "phase": "post", "change": "banner change on br1", "expected": "mcp-banner"},
 )
 def suite_change_check(
     site: Annotated[
@@ -59,11 +62,21 @@ def suite_change_check(
         ),
     ] = "",
     servers: SERVERS_ARG = "",
+    expected: Annotated[
+        str,
+        Field(
+            description="Post phase: the configuration objects the change itself touches, comma-separated "
+            "(access rule, policy set or authorization rule, template, configuration group names, or the "
+            "snapshot's config item keys); passed to each compare as `expected`, so whatever else changed "
+            "is reported as unexpected. Empty = name them from `change` where you can"
+        ),
+    ] = "",
 ) -> str:
     """Did anything else break? Snapshot every connected product before a change (phase=pre), then compare
     after it (phase=post): SD-WAN overlay, ISE authentication, Catalyst Center health and the firewalls, one
-    report of what changed by severity, expected effects apart. Skips the products whose server is not
-    connected and says so. Read-only: the snapshots are kept in the conversation, never on a server."""
+    report of what changed by severity, expected effects apart, and configuration objects that changed
+    outside the change (snapshot config sections). Skips the products whose server is not connected and says
+    so. Read-only: the snapshots are kept in the conversation, never on a server."""
     phase = phase.strip().lower()
     if phase not in ("pre", "post"):
         raise ValueError("phase must be 'pre' or 'post'")
@@ -95,21 +108,31 @@ def suite_change_check(
         if before.strip()
         else "the blob that server's snapshot tool returned in the pre phase of this conversation"
     )
+    names = ", ".join(e.strip() for e in expected.replace("\n", ",").split(",") if e.strip())
+    objects = (
+        f'expected="{names}"'
+        if names
+        else "expected = the configuration objects the planned change itself touches (rule, policy set, "
+        "template or configuration group names), when you can name them from the change, else no `expected`"
+    )
     steps = [
         f"Call {tool_ref(f'{leg.peer}_compare_snapshot')} with before = "
-        f"{source.replace('that server', leg.peer)}, unchanged, and no `after` (it takes the after snapshot "
-        f"now). No {leg.peer} blob? Say so, call {tool_ref(f'{leg.peer}_snapshot')} with {where} as a new "
-        f"baseline, and report {leg.peer} as not compared."
+        f"{source.replace('that server', leg.peer)}, unchanged, {objects}, and no `after` (it takes the "
+        f"after snapshot now). No {leg.peer} blob? Say so, call {tool_ref(f'{leg.peer}_snapshot')} with "
+        f"{where} as a new baseline, and report {leg.peer} as not compared."
         for leg in plan.legs
     ]
     steps.append(
         "Merge the results into one table, most severe first: severity, product, section, item, what "
-        f"changed. Put changes that are effects of the planned change{about} in a separate 'Expected' list."
+        f"changed. Put changes that are effects of the planned change{about}, and each result's `expected` "
+        "entries, in a separate 'Expected' list. Changes marked `config: true` left in `changes` are "
+        "configuration that changed outside the change: list them as 'Changed outside the change'."
     )
     steps.append(
         "End with the verdict: 'Nothing else changed' when no unexpected major or minor change is left, else "
         "the unexpected changes with the tool to look closer (e.g. BFD down -> the SD-WAN tunnel tools). "
-        "Name every leg that was skipped, not compared, `integrity: altered`, truncated or unreadable."
+        "Name every leg that was skipped, not compared, `integrity: altered`, truncated or unreadable, and "
+        "every `expected_unchanged` object (the change may not have been made)."
     )
     steps.append("This workflow only reads: call no write tool.")
     intro = f"Change check, phase post: what changed since the pre snapshots{about}."

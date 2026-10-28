@@ -1,11 +1,12 @@
 # Snapshot contract (pre/post change checks)
 
-Roadmap C53. Every change window ends with "did anything else break?". A server answers that with two tools:
+Roadmap C53 (health) and C78 (configuration). Every change window ends with two questions: "did anything else
+break?" and "did anything change that the change ticket did not name?". A server answers both with two tools:
 
 | Tool | Tier | Arguments | Returns |
 |---|---|---|---|
 | `<prefix>_snapshot` | read | `site: str = ""` (empty = everything the server sees), plus optional server-specific narrowing | a **snapshot blob** (JSON object, schema below) |
-| `<prefix>_compare_snapshot` | read | `before` (blob), `after` (blob, optional: empty = take a fresh snapshot with `before`'s scope now) | a **compare result** naming what changed by severity |
+| `<prefix>_compare_snapshot` | read | `before` (blob), `after` (blob, optional: empty = take a fresh snapshot with `before`'s scope now), `expected` (optional: the change's own configuration objects, list or comma-separated) | a **compare result** naming what changed by severity, the change's own objects apart |
 
 The **client holds the blobs**. The server stores nothing between calls (ADR-003: no server-side state). The
 blob goes back to the client in the conversation, and the client passes it to the compare unchanged. The suite
@@ -14,7 +15,12 @@ prompt `suite_change_check` (docs/SUITE-PROMPTS.md) runs these tools on every co
 Planned implementations: cat-sdwan W46, ise I82, catc D118, fmc F89. Suggested contents are under
 [What each server snapshots](#what-each-server-snapshots).
 
-## The blob, schema version 1
+## The blob, schema versions 1 and 2
+
+Version 2 (C78) adds **config sections** (`"kind": "config"`, [below](#config-sections-schema-2)). A blob is
+written as 2 only when it has a config section, so a health-only blob stays 1. Core reads both: a v1 blob taken
+before an upgrade compares with a v2 blob taken after it (the new config sections are noted as only in the after
+snapshot).
 
 ```json
 {
@@ -61,6 +67,7 @@ Planned implementations: cat-sdwan W46, ise I82, catc D118, fmc F89. Suggested c
 | `scope` | The arguments that define what was snapshotted (`{"site": "br1"}`; empty values left out). A fresh `after` is taken with the same scope. The compare notes when scopes differ. |
 | `sections` | Snake_case name to section. One section per kind of thing (sessions, peers, devices, alarms, ...). |
 | section `title` | Human name, used in the compare's `what` lines. |
+| section `kind` | Schema 2. `"config"` for a config section; absent means a health section. |
 | section `items` | Stable key to item (below). |
 | section `metrics` | Optional. Numeric item fields compared with a tolerance (below). |
 | section `truncated` | Optional. How many items were left out to stay within the size budget. The compare then reports no added or removed items in that section, only changes to items present in both blobs. |
@@ -95,6 +102,50 @@ stays **≤ 24,000 characters** (`snapshot.MAX_CHARS`) and each section holds at
 budget, the builder halves the biggest section until the blob fits. Unhealthy items (`ok: false`) are kept
 first, and the section is marked `truncated`. Prefer a narrower scope (one site) to a cut.
 
+## Config sections (schema 2)
+
+A config section holds **one digest per configuration object**: what the object is, not how healthy it is. It
+turns "nothing else broke" into "nothing else changed" for a method of procedure's pre/post check: an
+accidental rule edit, a policy-set reorder or an extra template push shows up even when health is fine.
+
+```json
+"access_rules": {
+  "title": "Access rules",
+  "kind": "config",
+  "items": {
+    "mcp-acp|mcp-allow-web": {"digest": "sha256:9f2c0e41d6b7a813"},
+    "mcp-acp|mcp-deny-telnet": {"digest": "sha256:1b44e0c27a90d5fe", "label": "Deny telnet (rule 3)"}
+  }
+}
+```
+
+| Item field | Meaning |
+|---|---|
+| key | Stable name of the object (`<policy>\|<rule name>`, `<device>\|<template>`), as for health items. |
+| `digest` | `snapshot.config_digest(obj, ignore=...)`: `sha256:` plus 16 hex digits over the object's canonical JSON. `ignore` drops volatile keys at any depth (`metadata`, `links`, timestamps, hit counts), so the digest moves only when the configuration does. |
+| `version` | The product's own version or revision (a template version, a configuration group's version). |
+| `label` | A human name when the key is not one; also matched by `expected`. |
+
+An item has a digest, a version or both, and nothing else: **digests only** keeps the blob within its budget
+(no configuration text, no secrets: hash the object as the API returns it, with secret values masked or dropped through `ignore`, since a short digest of a weak secret can be guessed). Build them with
+`Snapshot.section(name, title, kind="config")` and `Section.config(key, digest=..., version=..., label=...)`.
+
+The compare reports, for config sections only:
+
+| Severity | Kind | When |
+|---|---|---|
+| minor | `added` | a new object (`what`: "new object") |
+| minor | `removed` | an object is gone |
+| minor | `changed` | its `version` or `digest` moved, or its label changed (renamed) |
+
+Each such change carries `"config": true`. **`expected`** names the change's own objects, by key, by
+`section/key` or by label. Their changes go to the result's `expected` list (severity `expected`) instead of
+`changes`, and do not count in `counts` or the verdict, so what is left in `changes` changed **outside the
+change**. An expected object that did not change is listed in `expected_unchanged` (was the change made?), and
+one in neither blob in `expected_not_found`; both get a note. The verdict ends `; N expected config changes.`
+(`No unexpected change (...)` when nothing else moved). `expected` does not apply to health sections: health
+effects of the change are told apart by the reader (suite_change_check's 'Expected' list).
+
 ## The compare result
 
 ```json
@@ -113,7 +164,8 @@ first, and the section is marked `truncated`. Prefer a narrower scope (one site)
 ```
 
 `changes` is sorted by severity, then section, then item. It holds at most 100 entries; `changes_omitted` counts
-the rest. `notes` and `integrity` appear only when they apply.
+the rest. `notes` and `integrity` appear only when they apply; `expected` (and `expected_unchanged`,
+`expected_not_found`) only when `expected` was passed.
 
 | Severity | Kind | When |
 |---|---|---|
@@ -178,7 +230,9 @@ Rules:
   compare to "No change", and that a recorded failure (one session down, one NAD failing) is named as the
   only major change.
 - The schema version changes only for an incompatible change in core. New sections and fields are not
-  schema changes.
+  schema changes. Config sections were one (schema 2, C78).
+- Config sections: one product read per section, the same reads the server's list/get tools already make (no
+  new endpoint). Test that a recorded object edit shows as `changed` and is moved to `expected` when named.
 
 ## What each server snapshots
 
@@ -190,6 +244,23 @@ These are suggestions from the C53 issue. Each server's item decides the final s
 | ise | I82 | `nad_auth` (authentications and failure % per NAD over a fixed recent window, failure % as a metric), `nodes` (persona and state per node), `pxgrid_clients` (state per client) |
 | catc | D118 | `devices` (reachability, health score as a metric, software version), `sites` (health per site), `compliance` (status per device), `issues` (open P1/P2 issues by device and name) |
 | fmc | F89 | `deployment` (deploy state per device: pending changes or not), `ha` (role and state per pair), `interfaces` (link state of named interfaces), `vpn` (tunnel state per topology and peer) |
+
+### Config sections (C78)
+
+Suggestions; each server's adoption item decides. Keys are names, never UUIDs where a name exists.
+
+| Server | Section (`kind: "config"`) | Key | Digest / version |
+|---|---|---|---|
+| fmc | `access_rules` | `<access policy>\|<rule name>` | digest of the rule (ignore `metadata`, `links`, hit counts) |
+| fmc | `nat_rules` | `<NAT policy>\|<section>\|<rule index or description>` | digest of the rule (ignore `metadata`, `links`) |
+| ise | `policy_sets` | `<policy set name>` | digest of the set (condition, allowed protocols, rank, state) |
+| ise | `authz_rules` | `<policy set>\|<rule name>` | digest of the rule (condition, profiles, security group, rank) |
+| catc | `templates` | `<device>\|<template name>` | `version`: the committed template version deployed to the device |
+| catsdwan | `config_groups` | `<configuration group name>` | `version` of the group plus a digest of its feature profiles |
+| catsdwan | `device_variables` | `<device>\|<configuration group>` | digest of the device's variable values (secret variables masked or left out) |
+
+The change's own objects, named by these keys or labels, go to `<prefix>_compare_snapshot(expected=...)`;
+`suite_change_check(phase="post", expected=...)` passes them to every leg.
 
 For ISE, use a fixed window (e.g. the last 15 minutes before the snapshot), so the failure % compares like with
 like.
