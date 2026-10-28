@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-28
+
+### Added
+- Back-out step on every write (C81, #157): `Plan.undo` (`Undo(tool, args)`, `FromResult(path)`, or text such as
+  'not reversible'). The preview shows `undo: back-out: <tool>(<masked args>)`, the applied result carries
+  `undo: {tool, args, back_out}` filled from the apply result, and the `applied` audit event records it with secrets
+  masked. `testing.undo_problems()` and `assert_tool_contract(warn_undo=True)` warn (never fail) on write tools without one.
+- Backup-age rail (C73, #149): `MCP_REQUIRE_BACKUP_HOURS` (+ per-instance `<P>_<NAME>_REQUIRE_BACKUP_HOURS`,
+  `MCP_REQUIRE_BACKUP_TOOLS`, default `@dangerous`): dangerous previews show the newest backup's age and are blocked
+  when it is too old or unknown; servers register a `backup_age` hook (`register_backup_age`, `BackupAge`);
+  `<prefix>_waive_backup_check` (C70 override) lifts it for a while; `<prefix>_status` reports `server.rails.backup`.
+- Suite pack: `suite_segmentation_audit` prompt (C49, #123): per segment pair across SD-WAN VPNs and policy, ISE
+  SGACLs, FMC rules and SD-Access VNs, the intended verdict with its source tool against an observed
+  `cml_check_reachability` test, with a markdown + JSON evidence pack; C55 scenario manifest `edge-security.yaml`.
+- Toolsets (C31, #83): `toolset=` on `ToolRegistrar.read/write/dangerous` and `<P>_TOOLSETS` include/exclude at
+  registration, reported in `<prefix>_status.server.toolsets` and recorded per tool in the manifest.
+- Tool-surface budget lint (C31, #83): `testing.SurfaceBudget`, `tool_contract_problems(budget=...)`,
+  `assert_surface_budget` and `surface_size` for description, instruction and tool-count budgets.
+
+### Adopting
+- Undo (C81): fmc_create_access_rule -> fmc_delete_access_rule(id), ise_set_ip_sgt -> previous value, and so on, per
+  server.
+- Backup rail (C73): backup_age hooks from fmc_list_backups, ise_get_backup_status, catc_get_backup_status /
+  catc_list_backups and catsdwan_list_backups. Until a server registers one, setting the variable blocks its
+  dangerous previews as "age unknown".
+- Pin bump: every server regenerates `tests/manifests/<prefix>.json` (new `suite_segmentation_audit` prompt, per-tool
+  `toolsets` field) and accepts suite prompt snapshots.
+- Toolsets (C31): F46 / D41 / I44 declare their catalogues with `toolset=` and commit a `SurfaceBudget`.
+
 ## [0.19.0] - 2026-10-28
 
 ### Added
