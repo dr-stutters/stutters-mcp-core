@@ -360,6 +360,11 @@ class Plan:
     rewritten...), when the tool can count them. Shown in the preview and checked against
     MCP_MAX_BLAST_RADIUS / MCP_BLAST_RADIUS_OVERRIDES; None means "not counted" and is never limited.
 
+    `blast_unknown`: why the tool can't count it (C29), e.g. "a raw API call: the server can't tell what
+    it touches". The preview states 'blast_unknown: not counted (<reason>)' so an operator who set
+    MCP_MAX_BLAST_RADIUS sees the limit doesn't apply here. Every dangerous Plan sets one of the two
+    (`stutters_mcp_core.testing.blast_radius.assert_dangerous_plans_counted` checks); never both.
+
     `two_person`: this change always needs a second caller to confirm, whatever MCP_TWO_PERSON_TOOLS
     says (runtime rail overrides, C70)."""
 
@@ -370,6 +375,33 @@ class Plan:
     side_effects: list[str] = field(default_factory=list)
     blast_radius: int | None = None
     two_person: bool = False
+    blast_unknown: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.blast_unknown is not None:
+            if self.blast_radius is not None:
+                raise ValueError("Plan: set blast_radius or blast_unknown, not both")
+            if not self.blast_unknown.strip():
+                raise ValueError("Plan: blast_unknown needs a reason (why the blast radius can't be counted)")
+
+
+# Test hook (C29): stutters_mcp_core.testing.blast_radius pushes a list here and preview_or_apply appends
+# (tool, plan) to it. A module list rather than a ContextVar so in-memory clients' server tasks see it.
+_plan_recorders: list[list[tuple[str, Plan]]] = []
+
+
+def _blast_unknown_text(plan: Plan, info: dict[str, Any]) -> str | None:
+    """'not counted (<reason>)', noting a configured blast-radius limit that can't apply."""
+    if plan.blast_unknown is None:
+        return None
+    text = f"not counted ({plan.blast_unknown.strip()})"
+    limited = (
+        info.get("max_blast_radius") is not None
+        or (info.get("instance_rules") or {}).get("max_blast_radius") is not None
+    )
+    if limited:
+        text += "; the blast-radius limit (MCP_MAX_BLAST_RADIUS) can't check this change"
+    return text
 
 
 @dataclass
@@ -562,6 +594,8 @@ async def preview_or_apply(
         request_input,
     )
 
+    for recorder in _plan_recorders:
+        recorder.append((tool, plan))
     store = get_previews(ctx)
     caller = current_caller()
     target = target_name()
@@ -576,6 +610,9 @@ async def preview_or_apply(
         extra["policy"] = info
     elif plan.blast_radius is not None:
         extra["blast_radius"] = plan.blast_radius
+    if plan.blast_unknown is not None:
+        extra["blast_unknown"] = plan.blast_unknown
+    unknown_text = _blast_unknown_text(plan, info)
     identity = caller_identity(ctx, caller)
     if identity is not None:
         extra["role"] = identity["role"]
@@ -590,6 +627,8 @@ async def preview_or_apply(
             out["side_effects"] = plan.side_effects
         if plan.blast_radius is not None:
             out["blast_radius"] = plan.blast_radius
+        if unknown_text is not None:
+            out["blast_unknown"] = unknown_text
         if info:
             out["policy"] = info
         if identity is not None:

@@ -184,6 +184,7 @@ def register_spec_tools(
                     for k, v in {"params": params, "body": body, "source": source}.items()
                     if v
                 },
+                blast_unknown="a raw API call: the server can't tell what it touches",
             )
             result = await preview_or_apply(
                 ctx,
