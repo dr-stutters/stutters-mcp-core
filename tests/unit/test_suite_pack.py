@@ -18,6 +18,7 @@ from stutters_mcp_core.suite import (
     numbered,
     pack_problems,
     parse_servers,
+    pending_tools,
     plan_legs,
     suite_prompt,
 )
@@ -239,6 +240,60 @@ async def test_suite_pack_problems_against_manifests(pack: dict[str, SuitePrompt
     bare = build_server(SPEC, make_settings(**ALL_TIERS), client_factory=DemoApp, register=[demo.register])
     problems = await suite_pack_problems(bare, "demo", pack=pack)
     assert problems[0].startswith("suite prompt suite_demo_check: not registered (add suite.register")
+
+
+async def test_pack_pending_tools_are_skipped_legs(pack: dict[str, SuitePrompt], tmp_path: Path) -> None:
+    """C171: a leg tool the pack marks pending is waived on every server without a `pending=` list,
+    whether the peer (or this server) has shipped it or not."""
+    with pytest.raises(ValueError, match="not called by any leg"):
+        suite_prompt(title="x", legs=LEGS, pending=["other_gone"], pack={})
+    pending_pack: dict[str, SuitePrompt] = {}
+    legs = (
+        SuiteLeg("demo", "the item inventory", ("demo_list_items", "demo_not_yet")),
+        SuiteLeg("other", "the other things", ("other_list_things", "other_not_yet")),
+    )
+    suite_prompt(
+        title="Pending",
+        legs=legs,
+        pending=["other_not_yet", "demo_not_yet", "other_not_yet"],
+        pack=pending_pack,
+    )(pack["suite_demo_check"].fn)
+    assert pending_pack["suite_demo_check"].pending == ("other_not_yet", "demo_not_yet")
+    assert pending_tools(pending_pack) == {"suite_demo_check": ("other_not_yet", "demo_not_yet")}
+    assert pending_tools(pack) == {}  # prompts without pending tools are left out
+    # The meta (and so every server's committed manifest) does not change with `pending`.
+    assert "pending" not in pending_pack["suite_demo_check"].meta()
+
+    # Neither this server nor the peer ships its pending tool: no problem, no `pending=` needed.
+    server = _server(pending_pack, **ALL_TIERS)
+    (tmp_path / "other.json").write_text(json.dumps(_other_manifest(["other_list_things"])))
+    assert await suite_pack_problems(server, "demo", tmp_path, pack=pending_pack) == []
+    # A server still passing the old waiver for a pack-pending tool is fine too.
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=["other_not_yet"], pack=pending_pack)
+    assert found == []
+    # The peer ships it before core drops it from `pending`: not reported (the pin bump is not blocked).
+    (tmp_path / "other.json").write_text(json.dumps(_other_manifest(["other_list_things", "other_not_yet"])))
+    assert await suite_pack_problems(server, "demo", tmp_path, pack=pending_pack) == []
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=["other_not_yet"], pack=pending_pack)
+    assert found == []
+    # A tool that is not pending is still checked.
+    (tmp_path / "other.json").write_text(json.dumps(_other_manifest(["other_not_yet"])))
+    assert await suite_pack_problems(server, "demo", tmp_path, pack=pending_pack) == [
+        "suite prompt suite_demo_check: other leg calls 'other_list_things', "
+        "which the other manifest does not list"
+    ]
+
+
+def test_core_pack_pending_registry() -> None:
+    registry = pending_tools()
+    for name, tools in registry.items():
+        sp = suite.PACK[name]
+        assert tools and set(tools) <= set(sp.tools)
+    # Every pack module's PENDING_TOOLS is its prompt's `pending`.
+    from stutters_mcp_core.suite import access_review, decommission_site
+
+    assert registry.get("suite_access_review") == access_review.PENDING_TOOLS
+    assert "suite_decommission_site" not in registry and decommission_site.PENDING_TOOLS == ()
 
 
 async def test_assert_suite_pack_uses_core_pack(tmp_path: Path) -> None:

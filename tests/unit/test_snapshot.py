@@ -22,8 +22,6 @@ from stutters_mcp_core.snapshot import (
     register_snapshot_tools,
 )
 from stutters_mcp_core.suite import pack_problems
-from stutters_mcp_core.suite.access_review import PENDING_TOOLS
-from stutters_mcp_core.suite.decommission_site import PENDING_TOOLS as DECOMMISSION_PENDING
 from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
 
 from . import demo
@@ -401,6 +399,32 @@ async def test_change_check_passes_the_prompt_kit(tmp_path: Path) -> None:
     assert [p for p in problems if "suite_change_check" in p] == []
 
 
+@pytest.mark.parametrize("with_pending", [False, True])
+async def test_whole_pack_with_and_without_pending_tools(tmp_path: Path, with_pending: bool) -> None:
+    """C171, a core pin bump on a server: peer manifests that list every shipped leg tool pass with no
+    `pending=` list, whether or not the peers already ship the pack's pending tools."""
+    server = _suite_server()
+    pending = {t for tools in suite.pending_tools().values() for t in tools}
+    by_peer: dict[str, set[str]] = {}
+    for sp in suite.PACK.values():
+        for leg in sp.legs:
+            by_peer.setdefault(leg.peer, set()).update(
+                t for t in leg.tools if with_pending or t not in pending
+            )
+    for prefix, tools in by_peer.items():
+        (tmp_path / f"{prefix}.json").write_text(
+            json.dumps(
+                {
+                    "manifest": 1,
+                    "server": f"{prefix}-mcp-server",
+                    "prefix": prefix,
+                    "tools": dict.fromkeys(tools, {}),
+                }
+            )
+        )
+    assert await suite_pack_problems(server, "demo", tmp_path) == []
+
+
 SUITE = Path(__file__).resolve().parents[3]
 OWN_MANIFEST = {
     "catsdwan": "cat-sdwan-mcp-server",
@@ -423,8 +447,8 @@ async def test_pack_against_suite_checkout_manifests() -> None:
         pytest.skip("no sibling server checkouts with manifests")
     server = _suite_server()
     present = {p.stem for p in paths}
-    waived = (*SNAPSHOT_TOOLS, *PENDING_TOOLS, *DECOMMISSION_PENDING)
-    pending = [t for t in waived if t.split("_", 1)[0] in present]
+    # The pack's own pending leg tools (suite.pending_tools(), C171) are waived without being listed.
+    pending = [t for t in SNAPSHOT_TOOLS if t.split("_", 1)[0] in present]
     problems = await suite_pack_problems(server, "demo", *paths, pending=pending)
     # A waiver for a tool a server now ships is reported: that is the signal to drop it here.
     assert all("is in `pending` but" in p for p in problems), problems

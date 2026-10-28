@@ -6,9 +6,9 @@ a DHCP scope and DNS records on Windows. The prompt inventories everything tied 
 previews the removal product by product, removes each product only after the user approves that product's
 preview, and ends with a verify pass that must come back empty. Dangerous tier: it deletes devices and sites.
 
-`catsdwan_remove_device` (cat-sdwan W53, #81) is not shipped yet: `PENDING_TOOLS` lists it for the servers'
-`assert_suite_pack(pending=...)`. Until it ships the SD-WAN leg falls back to dissociating the edge from its
-configuration group and invalidating it, and says the device record stays.
+`catsdwan_remove_device` (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0, so `PENDING_TOOLS` is empty. On an
+older cat-sdwan server the SD-WAN leg falls back to dissociating the edge from its configuration group and
+invalidating it, and says the device record stays.
 
 The Windows server has no DHCP-scope delete tool and its tools are not preview-first, so the Windows leg
 writes its own preview (the exact cmdlet) and removes the scope with `win_run_powershell_json`.
@@ -75,8 +75,9 @@ LEGS = (
     ),
 )
 
-# Leg tools not shipped yet (2026-10-28): cat-sdwan W53 (#81) catsdwan_remove_device.
-PENDING_TOOLS = ("catsdwan_remove_device",)
+# Leg tools not shipped yet (the prompt's `pending`, waived by assert_suite_pack). catsdwan_remove_device
+# (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0.
+PENDING_TOOLS: tuple[str, ...] = ()
 
 # Never removed by this workflow, whatever site they sit in.
 PROTECTED = (
@@ -119,6 +120,7 @@ def parse_subnets(subnets: str) -> list[str]:
     legs=LEGS,
     tier=Tier.DANGEROUS,
     example={"site": "br9", "subnets": "192.0.2.0/24, 198.51.100.0/26", "dns_zone": "example.com"},
+    pending=PENDING_TOOLS,
 )
 def suite_decommission_site(
     site: Annotated[

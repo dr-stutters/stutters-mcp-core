@@ -11,7 +11,7 @@ from stutters_mcp_core import build_server, suite
 from stutters_mcp_core.prompts import find_tool_refs, rendered_text
 from stutters_mcp_core.suite import pack_problems
 from stutters_mcp_core.suite.decommission_site import PENDING_TOOLS, parse_site, parse_subnets
-from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
+from stutters_mcp_core.testing import assert_prompt_contract, load_tool_manifests, suite_pack_problems
 
 from . import demo
 from .demo import SPEC, DemoApp, make_settings
@@ -38,7 +38,8 @@ async def _render(args: dict[str, str]) -> str:
 def test_in_pack_and_clean() -> None:
     sp = suite.PACK[NAME]
     assert sp.requires == PEERS and sp.meta()["tier"] == "dangerous"
-    assert set(PENDING_TOOLS) <= set(sp.tools)
+    assert set(PENDING_TOOLS) <= set(sp.tools) and sp.pending == PENDING_TOOLS
+    assert "catsdwan_remove_device" not in PENDING_TOOLS  # shipped in cat-sdwan 0.7.0
     assert pack_problems() == []
 
 
@@ -157,26 +158,33 @@ async def test_prompt_kit_and_pending(tmp_path: Path) -> None:
     server = _server()
     await assert_prompt_contract(server, "demo", known_prefixes={"other"})
     sp = suite.PACK[NAME]
-    for prefix in ("catsdwan", "catc", "ise", "fmc"):
-        shipped = [t for t in sp.tools if t.startswith(prefix + "_") and t not in PENDING_TOOLS]
+
+    def write(prefix: str, tools: list[str]) -> None:
         (tmp_path / f"{prefix}.json").write_text(
             json.dumps(
                 {
                     "manifest": 1,
                     "server": f"{prefix}-mcp-server",
                     "prefix": prefix,
-                    "tools": dict.fromkeys(shipped, {}),
+                    "tools": dict.fromkeys(tools, {}),
                 }
             )
         )
+
+    for prefix in ("catsdwan", "catc", "ise", "fmc"):
+        write(prefix, [t for t in sp.tools if t.startswith(prefix + "_")])
+    assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == []
+
+    # catsdwan_remove_device is no longer pending: a cat-sdwan manifest older than 0.7.0 is reported ...
+    write("catsdwan", [t for t in sp.tools if t.startswith("catsdwan_") and t != "catsdwan_remove_device"])
     problems = [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p]
     assert problems == [
         f"suite prompt {NAME}: catsdwan leg calls 'catsdwan_remove_device', which the catsdwan manifest "
         "does not list"
     ]
-    found = await suite_pack_problems(server, "demo", tmp_path, pending=list(PENDING_TOOLS))
-    problems = [p for p in found if NAME in p]
-    assert problems == []
+    # ... unless that server waives it itself until it refreshes its copy of the manifest.
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=["catsdwan_remove_device"])
+    assert [p for p in found if NAME in p] == []
 
 
 SUITE = Path(__file__).resolve().parents[3]
@@ -190,7 +198,7 @@ OWN = {
 
 async def test_against_sibling_manifests() -> None:
     """Local only (skipped in CI): every leg tool not in PENDING_TOOLS is in its server's own committed
-    manifest, and a pending tool a server now ships is reported (drop it from PENDING_TOOLS)."""
+    manifest, and no pending tool is shipped already (drop it from PENDING_TOOLS)."""
     paths = [
         SUITE / repo / "tests" / "manifests" / f"{prefix}.json"
         for prefix, repo in OWN.items()
@@ -198,7 +206,7 @@ async def test_against_sibling_manifests() -> None:
     ]
     if not paths:
         pytest.skip("no sibling server checkouts with manifests")
-    present = {p.stem for p in paths}
-    pending = [t for t in PENDING_TOOLS if t.split("_", 1)[0] in present]
-    problems = [p for p in await suite_pack_problems(_server(), "demo", *paths, pending=pending) if NAME in p]
+    problems = [p for p in await suite_pack_problems(_server(), "demo", *paths) if NAME in p]
     assert problems == []
+    shipped = set().union(*load_tool_manifests(*paths).values())
+    assert [t for t in PENDING_TOOLS if t in shipped] == []
