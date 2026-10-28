@@ -388,6 +388,25 @@ They add to the server-wide `MCP_*` rails (both apply), show in previews under `
 `<prefix>_status(instance=...)` under `server.instance_rules`. They work on a single-instance server too
 (`ISE_READ_ONLY=true` makes the appliance read-only while write tools stay listed for previews).
 
+**One read across every instance (core C74).** Read tools also accept `instance='*'` (every instance) or a
+comma list (`instance='prod,dr'`). The read runs once per instance, `MCP_FANOUT_CONCURRENCY` (default 4) at a
+time, and returns one block per instance:
+
+```json
+{"instances": {"prod": {"result": {...}}, "dr": {"error": "ISE unreachable at https://ise-dr.example ..."}},
+ "partial": true}
+```
+
+An instance that fails (unreachable, wrong credentials) is reported with its error and `partial: true`; the
+others still answer. Write and dangerous tools refuse a fan-out: a change names one instance. With
+`MCP_CALLER_RATE_LIMIT`, a fan-out counts once per instance it reaches. Each instance's result keeps its own
+size budget (`MCP_MAX_RESPONSE_CHARS`), so a wide fan-out of a big list returns up to that many times more;
+narrow it with filters or `limit`.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MCP_FANOUT_CONCURRENCY` | `4` | how many instances a fan-out read calls at once (1-32) |
+
 ## Long-running calls as MCP tasks (core 0.10.0, roadmap C12)
 
 Deploys, discoveries, provisioning and image distribution can take 10+ minutes. With `MCP_TASKS=true`,

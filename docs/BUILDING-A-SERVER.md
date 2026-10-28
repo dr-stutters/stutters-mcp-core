@@ -180,6 +180,8 @@ Rules (enforced by `assert_tool_contract`):
   Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
 - Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
   module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
+  Read tools also run with `instance='*'` (C74): once per instance, several at a time, so a read must not
+  keep per-call state anywhere but locals and the client object.
 - Arguments that carry a secret without a secret-looking name (config lines, a topology, template
   content, an opaque blob): `@reg.write(redact={"lines": mask_config_value, "blob": True})` masks them in
   the audit log and previews (`stutters_mcp_core.config_mask.mask_config_value` masks IOS / NX-OS config

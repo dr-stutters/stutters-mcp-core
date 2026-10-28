@@ -60,9 +60,17 @@ class _Bucket:
 
 class CallerRateLimitMiddleware(Middleware):
     def __init__(
-        self, server_name: str, prefix: str, per_minute: float | None, by_role: dict[str, float], roles: Any
+        self,
+        server_name: str,
+        prefix: str,
+        per_minute: float | None,
+        by_role: dict[str, float],
+        roles: Any,
+        *,
+        names: list[str] | None = None,
     ) -> None:
         self.server_name = server_name
+        self.names = names  # configured instances: a fan-out read (instance='*') costs one call per instance
         self.exempt = {f"{prefix}_status"}
         self.default = per_minute
         self.by_role = by_role
@@ -76,8 +84,9 @@ class CallerRateLimitMiddleware(Middleware):
                 return self.by_role[role]
         return self.default
 
-    def check(self, caller: str, now: float | None = None) -> float:
-        """0 if the call may proceed, else the seconds until it could."""
+    def check(self, caller: str, now: float | None = None, *, cost: int = 1) -> float:
+        """0 if the call may proceed, else the seconds until it could. A call costing more than the burst
+        allowance (a wide fan-out) proceeds on a full bucket and leaves it in debt."""
         per_minute = self.limit_for(caller)
         if per_minute is None:
             return 0.0
@@ -93,10 +102,11 @@ class CallerRateLimitMiddleware(Middleware):
             self._buckets.move_to_end(caller)
             bucket.tokens = min(capacity, bucket.tokens + (now - bucket.updated) * rate)
         bucket.updated = now
-        if bucket.tokens >= 1:
-            bucket.tokens -= 1
+        needed = min(float(cost), capacity)
+        if bucket.tokens >= needed:
+            bucket.tokens -= cost
             return 0.0
-        return (1 - bucket.tokens) / rate
+        return (needed - bucket.tokens) / rate
 
     async def on_call_tool(
         self,
@@ -106,7 +116,12 @@ class CallerRateLimitMiddleware(Middleware):
         name = context.message.name
         if name not in self.exempt:
             caller = current_caller()
-            wait = self.check(caller)
+            cost = 1
+            if self.names:
+                from stutters_mcp_core.targets import ARGUMENT, fanout_legs
+
+                cost = fanout_legs((context.message.arguments or {}).get(ARGUMENT), self.names)
+            wait = self.check(caller, cost=cost)
             if wait > 0:
                 from stutters_mcp_core import metrics
 
@@ -117,6 +132,7 @@ class CallerRateLimitMiddleware(Middleware):
                             "tool": name,
                             "caller": caller,
                             "retry_after_s": round(wait, 1),
+                            **({"instances": cost} if cost > 1 else {}),
                         }
                     )
                 )
@@ -125,5 +141,6 @@ class CallerRateLimitMiddleware(Middleware):
                 raise ToolError(
                     f"Rate limit for {caller!r} reached ({self.limit_for(caller):g} tool calls per minute). "
                     f"Retry in {wait:.0f} s; batch work with list tools where possible."
+                    + (f" It fans out to {cost} instances and counts {cost} times." if cost > 1 else "")
                 )
         return await call_next(context)

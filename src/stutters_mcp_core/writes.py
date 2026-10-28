@@ -166,6 +166,16 @@ class ToolRegistrar:
         task_tools: set[str] = getattr(mcp, "_stutters_task_tools", set())
         mcp._stutters_task_tools = task_tools  # type: ignore[attr-defined]
         self.task_tools = task_tools  # tools registered as MCP background tasks (MCP_TASKS)
+        # Every instance's settings (build_server sets them), so a fan-out leg's error masks that instance's
+        # secrets too.
+        self.instance_settings: list[BaseServerSettings] = [settings]
+
+    def fanout_scrub(self, message: str) -> str:
+        """Secrets of every instance and credential shapes masked in a fan-out leg's error (C74)."""
+        from stutters_mcp_core.secrets import mask_values, scrub_error, secret_values
+
+        values = {v for cfg in self.instance_settings for v in secret_values(cfg)}
+        return scrub_error(mask_values(message, values), self.settings)
 
     def _register(
         self,
@@ -195,10 +205,19 @@ class ToolRegistrar:
                     f"{tool_name}: task=True needs an async function (background tasks run async)"
                 )
             registered: Callable[..., Any] = fn
-            if len(self.target_names) > 1:
+            multi = len(self.target_names) > 1
+            fanout = multi and tier is Tier.READ  # C74: reads take instance='*' / 'a,b'
+            if multi:
                 from stutters_mcp_core.targets import with_target_argument
 
-                registered = with_target_argument(fn, self.target_names, self.target_names[0])
+                registered = with_target_argument(
+                    fn,
+                    self.target_names,
+                    self.target_names[0],
+                    fanout=fanout,
+                    concurrency=getattr(self.settings, "mcp_fanout_concurrency", 4),
+                    scrub=self.fanout_scrub,
+                )
             extra: dict[str, Any] = {}
             if task and getattr(self.settings, "mcp_tasks", False):
                 # MCP background task (C12): clients that support tasks get a task handle and poll;
@@ -216,6 +235,15 @@ class ToolRegistrar:
                 )
                 extra["task"] = TaskConfig(mode="optional")
                 self.task_tools.add(tool_name)
+            if fanout:
+                # Clients check structured content against the output schema: widen it for the fan-out shape
+                from fastmcp.tools import FunctionTool
+
+                from stutters_mcp_core.targets import fanout_output_schema
+
+                own = FunctionTool.from_function(registered, name=tool_name).output_schema
+                if own is not None:
+                    extra["output_schema"] = fanout_output_schema(own)
             self.mcp.tool(
                 registered,
                 name=tool_name,
@@ -223,7 +251,7 @@ class ToolRegistrar:
                 annotations=annotations_for(
                     tier, title=title, destructive=destructive, idempotent=idempotent
                 ),
-                tags={tier.value, *(tags or set())},
+                tags={tier.value, *(["fanout"] if fanout else []), *(tags or set())},
                 **extra,
             )
             self.tiers[tool_name] = tier
