@@ -6,6 +6,35 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-28
+
+### Added
+- Idempotent writes (C71, #147): `Plan(noop=True)` (and `noop_reason`): a write that finds the target already as
+  requested answers `status: no_change` with no confirm token, a `noop` audit event and
+  `mcp_write_events_total{event="noop"}`, and no rails; a confirm sent after the target converged on its own answers
+  `no_change` and drops the token. `assert_tool_contract(noop_calls=...)` and `noop_result_problems()` check it.
+- Snapshot schema 2 (C78, #154): `config` sections (`Snapshot.section(kind="config")`, `Section.config(key, digest=,
+  version=, label=)`, `config_digest()`) and `expected=` on `<prefix>_compare_snapshot` / `suite_change_check`, so
+  configuration changed outside the change is reported separately. Core reads schema 1 and 2.
+- JSON-text arguments (C72, #148): opt-in `MCP_PARSE_JSON_ARGS` (`JsonArgsMiddleware`) parses JSON-text list/dict
+  tool arguments before validation (and before audit, so secrets inside are masked).
+- `ApiClient.forbidden_hint(detail)` hook (C72, #148): a 403 that names a feature flag or licence no longer tells the
+  user to check credentials.
+- Suite pack (C171, #171): `@suite_prompt(pending=...)` declares leg tools not shipped yet; `suite.pending_tools()`.
+
+### Changed
+- Secret masking (C72, #148): secret-named fields whose value looks like a flag ('on', 'true') are now masked; flag
+  strings are exempt only under flag-named keys.
+- Suite pack (C171, #171): `suite_pack_problems` / `assert_suite_pack` waive the pack's pending tools on every server,
+  so a new suite prompt no longer blocks a core pin bump.
+
+### Adopting
+- Pin bump: catc, ise and cat-sdwan regenerate `tests/manifests/<prefix>.json` and accept suite prompt snapshots (C171).
+- Idempotent writes (C71): fmc_configure_ntp/dns/syslog, ise_set_sgt, catc_update_site_settings and
+  catsdwan_set_device_variables return a noop Plan when nothing would change.
+- Snapshots (C78): fmc, ise, catc and cat-sdwan add config sections (docs/SNAPSHOTS.md has the per-server table).
+- JSON args (C72): fmc can drop `routing.mask_body` and `fleet.refusal()` workarounds.
+
 ## [0.18.0] - 2026-10-28
 
 ### Added
