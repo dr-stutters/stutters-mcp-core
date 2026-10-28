@@ -1,0 +1,21 @@
+# C24 Secure branch: a new branch built, onboarded to ISE and the SD-WAN hub, and its policy proven.
+scenario: 1
+name: secure-branch
+title: Secure branch
+epic: 71
+servers: [catc, ise, fmc, cml]
+pending: [catc_new_site_buildout, ise_onboard_nad]   # catc D44, ise I45
+steps:
+  - prompt: catc_new_site_buildout
+    leaves: [branch_site, access_switch_ip]
+  - prompt: ise_onboard_nad
+    needs: [access_switch_ip]
+    leaves: [branch_nad]
+  - prompt: fmc_onboard_branch
+    calls: [fmc_apply_device_template, fmc_sdwan_status]
+    leaves: [branch_ftd]
+  - tool: fmc_prove_policy
+    needs: [branch_ftd]
+requires:
+  recipes: [secure-branch]
+  fmc_device_slots: 2

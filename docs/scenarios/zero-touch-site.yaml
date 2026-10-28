@@ -1,0 +1,22 @@
+# C27 Zero-touch site buildout, from one site spec (ROADMAP.md "Shared spec").
+scenario: 1
+name: zero-touch-site
+title: Zero-touch site buildout
+epic: 74
+servers: [catc, ise]
+pending: [catc_new_site_buildout, catc_plan_site, ise_plan_site]   # catc D44/D46, ise I49
+steps:
+  - prompt: catc_new_site_buildout
+    calls: [catc_plan_site, catc_create_site, catc_update_site_settings, catc_claim_pnp_device,
+            catc_provision_devices]
+    leaves: [site_hierarchy, device_ips]
+  - tool: ise_plan_site
+    needs: [site_hierarchy]
+    leaves: [site_ndg]
+  - tool: ise_create_nad
+    needs: [device_ips, site_ndg]
+  - tool: catc_site_health_report
+    needs: [site_hierarchy]
+requires:
+  labs: [mcp-catc-pnp]
+  seed_objects: [mcp-test-site2]
