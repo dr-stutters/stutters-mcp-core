@@ -5,6 +5,10 @@
     async def test_contract():
         await assert_tool_contract(create_server(settings(writes=True, dangerous=True)), prefix="ise")
 
+    async def test_noop_contract(api):           # C71: these calls find the target already as asked
+        await assert_tool_contract(server, prefix="fmc",
+                                   noop_calls={"fmc_configure_ntp": {"device": "ftd1", "servers": [...]}})
+
     async def test_prompts():                    # every prompt renders; local tool references exist
         server = create_server(settings(writes=True, dangerous=True))
         await assert_prompt_contract(server, prefix="ise", known_prefixes={"cml", "ise", "fmc", "catc"},
@@ -79,6 +83,7 @@ __all__ = [
     "load_scenario",
     "load_tool_manifest",
     "load_tool_manifests",
+    "noop_result_problems",
     "prompt_contract_problems",
     "prompt_snapshot_problems",
     "reachable",
@@ -97,13 +102,42 @@ UNDOCUMENTED_OK = {"limit", "offset", "response_format", "confirm", "fields"}
 MIN_DESCRIPTION, MAX_DESCRIPTION = 30, 1500
 
 
-async def tool_contract_problems(mcp: FastMCP[Any], prefix: str) -> list[str]:
-    """Everything wrong with the server's tool surface, as human-readable strings."""
+# Keys a preview carries only so the change can be confirmed: a no_change result (C71) has none of them.
+CONFIRM_KEYS = ("confirm", "how_to_apply", "expires_in_seconds", "preview_id")
+
+
+def noop_result_problems(tool: str, result: Any) -> list[str]:
+    """What is wrong with a write tool's answer when the target was already in the requested state
+    (C71): it must be `status: no_change` and never carry a confirm token."""
+    if not isinstance(result, Mapping):
+        return [f"{tool}: no-op call returned {type(result).__name__}, not a result object"]
+    problems: list[str] = []
+    status = result.get("status")
+    if status != "no_change":
+        problems.append(f"{tool}: no-op call returned status {status!r}, expected 'no_change'")
+    leaked = [k for k in CONFIRM_KEYS if k in result]
+    if leaked:
+        problems.append(f"{tool}: a no-op result must not carry a confirm token ({', '.join(leaked)})")
+    return problems
+
+
+async def tool_contract_problems(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *,
+    noop_calls: Mapping[str, Mapping[str, Any] | Iterable[Mapping[str, Any]]] | None = None,
+) -> list[str]:
+    """Everything wrong with the server's tool surface, as human-readable strings.
+
+    `noop_calls` ({tool: args, or a list of args}) are write-tool calls that, on the test's mocked
+    appliance, find the target already in the requested state (C71): each is called without `confirm`
+    and must answer `status: no_change` with no confirm token (`noop_result_problems`)."""
     problems: list[str] = []
     async with Client(mcp) as client:
         tools = await client.list_tools()
-    if not tools:
-        return ["server exposes no tools"]
+        if not tools:
+            return ["server exposes no tools"]
+        problems += await _noop_call_problems(client, tools, noop_calls or {})
     for t in tools:
         where = t.name
         if not t.name.startswith(prefix + "_") or not NAME_RE.match(t.name):
@@ -437,8 +471,44 @@ async def assert_suite_pack(
     assert not problems, "Suite prompt pack problems:\n  " + "\n  ".join(problems)
 
 
-async def assert_tool_contract(mcp: FastMCP[Any], prefix: str) -> None:
-    problems = await tool_contract_problems(mcp, prefix)
+async def _noop_call_problems(
+    client: Client[Any],
+    tools: list[Any],
+    noop_calls: Mapping[str, Mapping[str, Any] | Iterable[Mapping[str, Any]]],
+) -> list[str]:
+    problems: list[str] = []
+    by_name = {t.name: t for t in tools}
+    for name, sample in noop_calls.items():
+        tool = by_name.get(name)
+        if tool is None:
+            problems.append(f"{name}: no-op call names a tool the server doesn't expose")
+            continue
+        tags = set(((tool.meta or {}).get("fastmcp", {}) or {}).get("tags", []) or [])
+        if not tags & {"write", "dangerous"}:
+            problems.append(f"{name}: no-op calls are for write tools (it has no write tier)")
+            continue
+        cases = [sample] if isinstance(sample, Mapping) else list(sample)
+        for args in cases:
+            if "confirm" in args:
+                problems.append(f"{name}: a no-op call is made without confirm")
+                continue
+            try:
+                result = await client.call_tool(name, dict(args))
+            except Exception as e:  # noqa: BLE001 - reported as a contract problem
+                problems.append(f"{name}: no-op call failed: {type(e).__name__}: {e}")
+                continue
+            content = result.structured_content
+            problems += noop_result_problems(name, content if content is not None else result.content)
+    return problems
+
+
+async def assert_tool_contract(
+    mcp: FastMCP[Any],
+    prefix: str,
+    *,
+    noop_calls: Mapping[str, Mapping[str, Any] | Iterable[Mapping[str, Any]]] | None = None,
+) -> None:
+    problems = await tool_contract_problems(mcp, prefix, noop_calls=noop_calls)
     assert not problems, "Tool contract violations:\n  " + "\n  ".join(problems)
 
 
