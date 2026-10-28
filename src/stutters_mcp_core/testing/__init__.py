@@ -58,7 +58,7 @@ from stutters_mcp_core.manifest import (
 )
 from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, sample_value
 from stutters_mcp_core.settings import BaseServerSettings
-from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt
+from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt, pending_tools
 from stutters_mcp_core.suite import PEERS as SUITE_PEERS
 from stutters_mcp_core.testing.partial_lint import discarded_complete
 from stutters_mcp_core.testing.scenario import assert_scenarios, load_scenario, scenario_problems
@@ -430,16 +430,21 @@ async def suite_pack_problems(
     - every pack prompt is registered (the server calls `suite.register`);
     - every leg tool of this server (`prefix`) is registered here;
     - every leg tool of a peer whose manifest is in `manifest_paths` is listed in that manifest.
-    `pending` names leg tools that are known to be missing (a peer has not shipped them yet); they are
-    not reported, but listing one that now exists is (drop it from `pending`). Peers without a committed
-    manifest are not checked."""
+    Each pack prompt's own `pending` tools (`suite.pending_tools()`: leg tools core knows are not shipped
+    yet) are always waived: missing, the leg counts as skipped, not a failure, and present is fine too, so
+    neither a new suite prompt nor a peer shipping its tool blocks a server's core pin bump.
+    `pending` adds this server's own waivers (a peer tool missing from the committed manifest, e.g. one
+    older than the peer's release); they are not reported, but listing one that now exists is (drop it
+    from `pending`), as is one no leg calls. Peers without a committed manifest are not checked."""
     pack = PACK if pack is None else pack
     local = {t.name for t in await mcp.list_tools(run_middleware=False)}
     registered = {p.name for p in await mcp.list_prompts(run_middleware=False)}
     local |= registered
     peers = {m.prefix: m.names for m in read_tool_manifests(*manifest_paths)}
     peers[prefix] = local
-    waived = set(pending)
+    built_in = {t for tools in pending_tools(pack).values() for t in tools}
+    extra = set(pending) - built_in
+    waived = built_in | extra
     problems: list[str] = []
     for sp in pack.values():
         where = f"suite prompt {sp.name}"
@@ -450,12 +455,12 @@ async def suite_pack_problems(
             if names is None:
                 continue
             for tool in leg.tools:
-                if tool in names and tool in waived:
+                if tool in names and tool in extra:
                     problems.append(f"{where}: '{tool}' is in `pending` but {leg.peer} has it now")
                 elif tool not in names and tool not in waived:
                     source = "this server" if leg.peer == prefix else f"the {leg.peer} manifest"
                     problems.append(f"{where}: {leg.peer} leg calls '{tool}', which {source} does not list")
-    for tool in sorted(waived - {t for sp in pack.values() for t in sp.tools}):
+    for tool in sorted(extra - {t for sp in pack.values() for t in sp.tools}):
         problems.append(f"`pending` names '{tool}', which no suite prompt leg calls")
     return list(dict.fromkeys(problems))
 
@@ -466,7 +471,8 @@ async def assert_suite_pack(
     *manifest_paths: str | Path,
     pending: Iterable[str] = (),
 ) -> None:
-    """Fail if the suite pack is not registered or a leg's tool is missing (see `suite_pack_problems`)."""
+    """Fail if the suite pack is not registered or a leg's tool is missing (see `suite_pack_problems`).
+    Leg tools the pack itself marks pending are waived without being listed here."""
     problems = await suite_pack_problems(mcp, prefix, *manifest_paths, pending=pending)
     assert not problems, "Suite prompt pack problems:\n  " + "\n  ".join(problems)
 

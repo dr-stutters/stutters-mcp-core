@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-28
+
+### Added
+- Multi-instance fan-out (C74, #150): read tools take `instance='*'` or `'a,b'` on multi-instance servers and return
+  one result (or error) per instance with `partial`; writes refuse a fan-out; `MCP_FANOUT_CONCURRENCY` (default 4)
+  bounds it and per-caller rate limits count each instance.
+- Blast radius (C29, #81): `Plan(blast_unknown=reason)` states why a dangerous change's blast radius isn't counted
+  (preview, audit, pending listing, dialog); new `testing.blast_radius.assert_dangerous_plans_counted` contract
+  helper; the raw `<prefix>_api_call` declares an unknown blast radius.
+- Suite pack: `suite_maintenance_window` prompt (C51, #124): one maintenance window across SD-WAN edges, Catalyst
+  Center SWIM and ISE patch checks with plan, pre/post snapshots and per-product previews.
+- `stutters_mcp_core.config_mask` (C28, #80): IOS / NX-OS / ASA config-line masker (`mask_text`,
+  `mask_config_value`, `mask_command_lines`) and `ToolRegistrar.read/write/dangerous(redact={arg: True | fn})`.
+- `stutters_mcp_core.testing.partial_lint` (C30, #82): lists call sites that discard `fetch_all(...).complete`.
+
+### Changed
+- Secret masking (C28, #80): the audit log, confirmation dialogs and two-person review mask FTD reg_key/nat_id,
+  `community` arguments, SecretStr parameters, per-tool `redact=` arguments and IOS/NX-OS config secrets (enable
+  secret, username secret, snmp-server community, key 7, crypto isakmp key).
+- Output integrity (C30, #82): capped `fetch_all` collections carry `partial`/`note` (or raise `PartialCollection`
+  with `on_partial="raise"`) through `page_of`/`list_result`/`object_result`; Markdown tables keep `id` and name
+  hidden columns; oversized objects are cut by field into valid JSON with `truncated_fields`.
+
+### Adopting
+- Suite pack (C51): commit the new prompt snapshot file.
+- Secrets (C28): cml registers its config-bearing tools with `redact={..: mask_config_value}` and can drop its own
+  masker; catc masks template `content`.
+- Blast radius (C29): fmc, ise and catc count or declare every dangerous Plan and wire
+  `assert_dangerous_plans_counted` into their unit tests.
+- Output integrity (C30): run `partial_lint` and pass `on_partial="raise"` where a cap feeds a safety check
+  (F46/D41/I44 operator passes); `fetch_hints=` on large `object_result` replies.
+- Fan-out (C74): nothing to change; read tools fan out (with a widened output schema) only when `<P>_INSTANCES`
+  names more than one instance.
+
 ## [0.17.0] - 2026-10-28
 
 ### Added
