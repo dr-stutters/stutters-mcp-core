@@ -1,0 +1,24 @@
+# C25 User-based firewall: AD user -> ISE 802.1X -> FMC identity rule by user -> offboarding.
+scenario: 1
+name: user-firewall
+title: User-based firewall
+epic: 72
+servers: [win, ise, fmc]
+no_manifest: [win]                 # the Windows_Server MCP publishes no manifest yet (G77)
+pending: [ise_employee_onboarding, ise_employee_offboarding]
+steps:
+  - tool: win_create_ad_user
+    leaves: [ad_user]
+  - tool: win_add_group_member
+    needs: [ad_user]
+  - prompt: ise_employee_onboarding
+    needs: [ad_user]
+    leaves: [user_session]
+  - prompt: fmc_prove_user_policy
+    calls: [fmc_rule_lookup, fmc_packet_tracer, ise_find_session]
+    needs: [user_session]
+  - prompt: ise_employee_offboarding
+    needs: [ad_user]
+requires:
+  recipes: [ise-fmc-identity]
+  fmc_device_slots: 1

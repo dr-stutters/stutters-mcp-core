@@ -56,6 +56,7 @@ from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, 
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt
 from stutters_mcp_core.suite import PEERS as SUITE_PEERS
+from stutters_mcp_core.testing.scenario import assert_scenarios, load_scenario, scenario_problems
 from stutters_mcp_core.vocabulary import vocabulary_problems, warn_vocabulary
 
 __all__ = [
@@ -65,6 +66,7 @@ __all__ = [
     "assert_inbound_references",
     "assert_prompt_contract",
     "assert_prompt_snapshots",
+    "assert_scenarios",
     "assert_suite_pack",
     "assert_tool_contract",
     "build_manifest",
@@ -72,6 +74,7 @@ __all__ = [
     "compare_snapshots",
     "inbound_reference_problems",
     "live_settings",
+    "load_scenario",
     "load_tool_manifest",
     "load_tool_manifests",
     "prompt_contract_problems",
@@ -79,6 +82,7 @@ __all__ = [
     "reachable",
     "read_tool_manifests",
     "render_prompts",
+    "scenario_problems",
     "suite_pack_problems",
     "tool_contract_problems",
     "vocabulary_problems",
