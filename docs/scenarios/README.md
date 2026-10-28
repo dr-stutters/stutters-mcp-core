@@ -26,9 +26,12 @@ A scenario has five parts:
 | Zero-touch site buildout | [C27](https://github.com/dr-stutters/stutters-mcp-core/issues/74) | [zero-touch-site.yaml](zero-touch-site.yaml) | `catc_new_site_buildout` (catc) | catc, ise | PnP lab |
 | Secure branch | [C24](https://github.com/dr-stutters/stutters-mcp-core/issues/71) | [secure-branch.yaml](secure-branch.yaml) | `catc_new_site_buildout` (catc), closes with `fmc_prove_policy` | catc, ise, fmc, cml | recipe `secure-branch` |
 | User-based firewall | [C25](https://github.com/dr-stutters/stutters-mcp-core/issues/72) | [user-firewall.yaml](user-firewall.yaml) | `ise_employee_onboarding` (ise) | Windows Server MCP, ise, fmc | recipe `ise-fmc-identity` |
+| Edge security and FTD service insertion | [C55](https://github.com/dr-stutters/stutters-mcp-core/issues/104) | [edge-security.yaml](edge-security.yaml) | `catsdwan_trace_through_firewall` (catsdwan), audited with `suite_segmentation_audit` (suite) | catsdwan, fmc, ise, catc, cml | recipe `cat-sdwan-secure` |
 
 Names a server has not shipped yet sit in each manifest's `pending:` list; the checker reports them once
-they exist, so the list shrinks as the epic's checklist is ticked.
+they exist, so the list shrinks as the epic's checklist is ticked. A `suite_*` prompt step (core's suite pack,
+registered on every server) uses the pseudo-server `suite`: list it in `servers` and in `no_manifest`; its
+`calls` are still checked against each peer's manifest.
 
 ## Manifest template
 
