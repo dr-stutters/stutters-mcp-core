@@ -489,7 +489,8 @@ def undo_applied(undo: Undo | str, result: Any) -> dict[str, Any]:
             "back_out": f"{undo.tool}: arguments could not be filled from the result "
             f"({scrub_text(str(e))[:200]}); look the object up and call it by hand",
         }
-    shown = redact_args(args, tool=undo.tool)
+    # Not cut to the audit length: the model replays these arguments (a previous value can be long).
+    shown = redact_args(args, tool=undo.tool, max_chars=None)
     return {"tool": undo.tool, "args": shown, "back_out": _undo_call_text(undo.tool, args)}
 
 
@@ -1084,7 +1085,13 @@ async def _apply_change(
     if undo is not None:
         # The event keeps the structured call: the rendered `back_out` line repeats it, and its
         # `secret=<masked>` pairs would be re-scrubbed by the log filter, breaking the JSON line.
-        logged = {k: v for k, v in undo.items() if k != "back_out"} if "tool" in undo else undo
+        # Arguments are cut to the audit length here (the result keeps them whole for replaying).
+        from stutters_mcp_core.audit import redact_args
+
+        if "args" in undo:
+            logged = {"tool": undo["tool"], "args": redact_args(undo["args"], tool=undo["tool"])}
+        else:  # a text step, or a call whose arguments could not be filled (the reason stays)
+            logged = undo
         _emit(ctx, "applied", tool, caller, plan.summary, undo=logged, **extra)
     else:
         _emit(ctx, "applied", tool, caller, plan.summary, **extra)

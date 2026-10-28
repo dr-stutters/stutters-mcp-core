@@ -323,6 +323,15 @@ async def test_unfillable_undo_does_not_fail_the_apply(api: Any, caplog: pytest.
     assert applied["status"] == "applied"
     assert applied["undo"]["tool"] == "demo_undo_delete_rule" and "args" not in applied["undo"]
     assert "could not be filled" in applied["undo"]["back_out"]
+    event = next(e for e in audit_events(caplog) if e["event"] == "applied")
+    assert "could not be filled" in event["undo"]["back_out"]
+
+
+def test_long_undo_args_stay_whole_in_the_result() -> None:
+    """The model replays `undo.args`: a long previous value is not cut to the audit length."""
+    previous = {"entries": [{"ip": f"192.0.2.{i}", "sgt": 10 + i} for i in range(40)]}
+    applied = undo_applied(Undo("demo_restore", {"values": previous}), None)
+    assert applied["args"]["values"] == previous
 
 
 async def test_plain_write_has_no_undo(api: Any) -> None:
