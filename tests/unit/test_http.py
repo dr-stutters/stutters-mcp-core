@@ -296,3 +296,65 @@ async def test_page_number_max_page_override() -> None:
             c, "/e", limit=4, offset=2, max_page=2
         )
         assert page.items == [2, 3, 4, 5] and sizes == [2, 2]
+
+
+# --- C72: 403 hint -----------------------------------------------------------------------
+
+# FMC 10.0.1 refusal of POST devices/devicerecords/operational/bulkcommands with the feature flag off
+# (recorded W6 run, fmc 0.15); the message text is FMC's, the path is synthetic.
+FEATURE_FLAG_403 = {
+    "error": {
+        "category": "FRAMEWORK",
+        "messages": [
+            {
+                "description": "Feature Flag : bulk_device_command_execution is disabled for the request. "
+                "Request is forbidden."
+            }
+        ],
+        "severity": "ERROR",
+    }
+}
+
+
+@respx.mock
+async def test_403_feature_flag_drops_the_credentials_sentence() -> None:
+    respx.post(f"{BASE}/bulkcommands").mock(return_value=httpx.Response(403, json=FEATURE_FLAG_403))
+    async with ApiClient(BASE, product="FMC", env_prefix="FMC_") as c:
+        with pytest.raises(AuthError) as ei:
+            await c.post("/bulkcommands", {})
+    text = str(ei.value)
+    assert "bulk_device_command_execution is disabled" in text and ei.value.status_code == 403
+    assert "FMC_USERNAME" not in text and "FMC_PASSWORD" not in text
+    assert "feature or licence" in text and "role allows this operation" in text
+
+
+@pytest.mark.parametrize(
+    ("status", "detail", "credentials"),
+    [
+        (403, "Access denied for this user", True),
+        (403, "The license for this feature is not available", False),
+        (403, "Smart Licence out of compliance", False),
+        (401, "Feature Flag x is disabled", True),  # 401 is always about the login
+    ],
+)
+@respx.mock
+async def test_auth_hint_by_detail(status: int, detail: str, credentials: bool) -> None:
+    respx.get(f"{BASE}/a").mock(return_value=httpx.Response(status, json={"message": detail}))
+    async with ApiClient(BASE, product="FMC", env_prefix="FMC_") as c:
+        with pytest.raises(AuthError) as ei:
+            await c.get("/a")
+    assert ("FMC_USERNAME/FMC_PASSWORD" in str(ei.value)) is credentials
+
+
+class _QuietClient(ApiClient):
+    def forbidden_hint(self, detail: str) -> str | None:
+        return None if "scope" in detail else super().forbidden_hint(detail)
+
+
+@respx.mock
+async def test_forbidden_hint_is_a_server_hook() -> None:
+    respx.get(f"{BASE}/s").mock(return_value=httpx.Response(403, json={"message": "missing scope"}))
+    async with _QuietClient(BASE, product="X", env_prefix="X_") as c:
+        with pytest.raises(AuthError) as ei:
+            await c.get("/s")
+    assert str(ei.value).endswith("missing scope.")

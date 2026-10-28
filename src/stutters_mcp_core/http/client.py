@@ -10,6 +10,7 @@ import asyncio
 import email.utils
 import logging
 import random
+import re
 import time
 from collections.abc import Callable, Iterable
 from typing import Any, Literal
@@ -79,6 +80,10 @@ def _retry_after(resp: httpx.Response) -> float | None:
 
 def _backoff(attempt: int) -> float:
     return float(min(10.0, 0.5 * 2**attempt) + random.uniform(0, 0.25))
+
+
+# A 403 detail that names the reason as a feature (flag) or a licence rather than the login (C72).
+_FEATURE_REFUSAL_RE = re.compile(r"\bfeature|\blicen[cs]", re.IGNORECASE)
 
 
 class ApiClient:
@@ -182,6 +187,24 @@ class ApiClient:
             )
         )
 
+    def _credentials_hint(self) -> str:
+        return (
+            f"Check {self.env_prefix}USERNAME/{self.env_prefix}PASSWORD and that the account's role "
+            "allows this operation."
+        )
+
+    def forbidden_hint(self, detail: str) -> str | None:
+        """The sentence after a 403's detail (C72); None for none. Override per product for refusals the
+        default doesn't recognise. When the detail already says the refusal is about a feature (flag) or a
+        licence, e.g. FMC's "Feature Flag : bulk_device_command_execution is disabled for the request",
+        the credentials sentence is left out: the login worked."""
+        if _FEATURE_REFUSAL_RE.search(detail):
+            return (
+                f"{self.product} refused it on a feature or licence setting, not the login: check that the "
+                "feature is enabled and licensed, and that the account's role allows this operation."
+            )
+        return self._credentials_hint()
+
     def error_from_response(self, resp: httpx.Response) -> UpstreamError:
         body: Any
         try:
@@ -191,11 +214,15 @@ class ApiClient:
         detail = scrub_text(self._error_detail(body) or resp.reason_phrase or "no detail")
         code = resp.status_code
         where = f"{resp.request.method} {resp.request.url.path}"
-        if code in (401, 403):
+        if code == 401:
             return AuthError(
-                f"{self.product} denied access ({code}) on {where}: {detail}. Check "
-                f"{self.env_prefix}USERNAME/{self.env_prefix}PASSWORD and that the account's role "
-                "allows this operation.",
+                f"{self.product} denied access ({code}) on {where}: {detail}. {self._credentials_hint()}",
+                code,
+            )
+        if code == 403:
+            hint = self.forbidden_hint(detail)
+            return AuthError(
+                f"{self.product} denied access ({code}) on {where}: {detail}." + (f" {hint}" if hint else ""),
                 code,
             )
         if code == 404:

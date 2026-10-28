@@ -427,3 +427,45 @@ def test_redact_value_nested_lists_and_strings() -> None:
     assert "s3cr3tpw" not in out[2] and "user=x" in out[2]
     assert body[0]["vpn"]["manualPreSharedKey"] == "abc12345"  # the input is not changed
     assert redact_value(None) is None and redact_value(3) == 3
+
+
+# --- C72: flag-valued secrets --------------------------------------------------------------
+
+
+def test_secret_named_strings_that_look_like_flags_are_masked() -> None:
+    # Shapes recorded on FMC 10.0.1 BGP/OSPF previews (W6N review of fmc #307), synthetic values.
+    body = {
+        "neighbors": [{"ipv4Address": "192.0.2.1", "neighborSecret": "on", "remoteAs": "65001"}],
+        "md5Key": "true",
+        "passwdAuth": {"authKey": "off", "enabled": "true"},
+        "snmpCommunity": "Yes",
+        "enableSecret": "on",
+        "enable_password": "no",
+    }
+    out = mask_secrets(body)
+    assert out["neighbors"][0] == {
+        "ipv4Address": "192.0.2.1",
+        "neighborSecret": "********",
+        "remoteAs": "65001",
+    }
+    assert out["md5Key"] == "********" and out["snmpCommunity"] == "********"
+    assert out["passwdAuth"] == {"authKey": "********", "enabled": "true"}
+    assert out["enableSecret"] == "********" and out["enable_password"] == "********"
+    assert compact({"neighborSecret": "on"}) == {"neighborSecret": "********"}
+
+
+def test_flags_under_secret_names_stay_when_boolean_or_flag_named() -> None:
+    data = {
+        "radiusSharedSecret": True,  # a real boolean is never a secret
+        "isPskSet": "true",
+        "use_md5_key": "yes",
+        "allowSharedSecret": "false",
+        "enableMultiSecret": "on",  # NOT_SECRET_KEYS
+        "userPassword": "on",  # "user" is not the "use" prefix
+        "issuerSecret": "off",
+    }
+    out = mask_secrets(data)
+    assert out["radiusSharedSecret"] is True and out["isPskSet"] == "true" and out["use_md5_key"] == "yes"
+    assert out["allowSharedSecret"] == "false" and out["enableMultiSecret"] == "on"
+    assert out["userPassword"] == "********" and out["issuerSecret"] == "********"
+    assert redact_args({"body": {"neighborSecret": "on"}})["body"]["neighborSecret"] == "********"
