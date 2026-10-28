@@ -230,6 +230,7 @@ def build_server(
                 settings.mcp_caller_rate_limit,
                 parse_role_limits(settings.mcp_caller_rate_limit_by_role),
                 roles,
+                names=names if multi else None,  # a fan-out read counts once per instance (C74)
             )
         )
     mcp.add_middleware(SecretErrorMiddleware(settings))
@@ -255,6 +256,7 @@ def build_server(
         _enable_tasks(mcp, settings)
     mcp._stutters_policy = policy  # type: ignore[attr-defined]
     reg = ToolRegistrar(mcp, settings, spec.prefix)
+    reg.instance_settings = list(configs.values())
     _register_status(reg, spec, settings, status)
     instance_two_person = any(InstanceRules.from_settings(c).two_person for c in configs.values())
     override_two_person = settings.mcp_runtime_overrides and settings.mcp_override_two_person

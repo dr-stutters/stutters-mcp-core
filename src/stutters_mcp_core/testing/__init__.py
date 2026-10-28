@@ -126,6 +126,11 @@ async def tool_contract_problems(mcp: FastMCP[Any], prefix: str) -> list[str]:
         if "dangerous" in tags and not ann.destructive_hint:
             problems.append(f"{where}: dangerous tool must have destructiveHint=True")
         props: dict[str, Any] = (t.input_schema or {}).get("properties", {})
+        instance = props.get("instance")
+        fans_out = "fanout" in tags or (isinstance(instance, dict) and instance.get("x-fanout"))
+        # C74: instance='*' runs the tool on every appliance, so it must be a read
+        if fans_out and ("read" not in tags or tags & {"write", "dangerous"} or not ann.read_only_hint):
+            problems.append(f"{where}: only read-only (read-tier) tools may fan out across instances")
         if tags & {"write", "dangerous"} and "confirm" not in props:
             problems.append(f"{where}: write tools must take a `confirm` parameter (preview-first)")
         if "_list_" in t.name or t.name.startswith(f"{prefix}_list"):

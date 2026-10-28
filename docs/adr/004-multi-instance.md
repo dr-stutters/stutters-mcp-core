@@ -61,3 +61,14 @@ Option 2, opt-in, with single-target behaviour unchanged.
   (`get_client(ctx)`); iterating or copying it shows the shared entries only.
 - A tool that declares its own `instance` parameter can't be wrapped; registration fails loudly when
   instances are configured.
+
+## Addendum: fan-out reads (C74, #150)
+
+Operators with several FMCs or a production and a DR ISE ask "where is this IP?" across all of them. Read-tier
+tools now also accept `instance='*'` or `'a,b'`: the registrar runs the tool once per instance under
+`current_target` (bounded by `MCP_FANOUT_CONCURRENCY`, default 4) and returns
+`{"instances": {name: {"result": ...} | {"error": "..."}}, "partial": bool}`. A failing instance never fails the
+call. Write and dangerous tools keep the single-instance enum and refuse a fan-out (InvalidRequest), so a
+change always names one appliance. Per-caller rate limits count each leg; the tool contract checks that only
+read-only tools fan out; the output schema of a fan-out-capable tool is widened to accept the fan-out shape.
+

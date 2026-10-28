@@ -210,6 +210,11 @@ class BaseServerSettings(BaseSettings):
         default=None, validation_alias=_alias("MCP_CALLER_RATE_LIMIT_BY_ROLE")
     )
 
+    # --- multi-instance fan-out (C74): read tools with instance='*' / 'a,b' call this many instances at once
+    mcp_fanout_concurrency: int = Field(
+        default=4, ge=1, le=32, validation_alias=_alias("MCP_FANOUT_CONCURRENCY")
+    )
+
     # --- MCP background tasks (C12): `reg.write(..., task=True)` tools become MCP tasks -------
     mcp_tasks: bool = Field(default=False, validation_alias=_alias("MCP_TASKS"))
     mcp_tasks_url: str = Field(default="memory://", validation_alias=_alias("MCP_TASKS_URL"))

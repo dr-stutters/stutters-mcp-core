@@ -6,15 +6,23 @@
 
 With more than one instance, every tool gets an optional `instance` argument; tools call `get_client(ctx)` as
 before and receive the selected target's client. With one target nothing changes.
+
+Read-tier tools also take `instance='*'` (every instance) or a comma list ('prod,dr') (C74): the call runs
+once per instance, at most MCP_FANOUT_CONCURRENCY at a time, and returns
+`{"instances": {name: {"result": ...} | {"error": "..."}}, "partial": bool}`. Write and dangerous tools refuse
+a fan-out: a change names one appliance.
 """
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import json
+import logging
 import re
-from collections.abc import Callable
-from contextvars import ContextVar
+from collections.abc import Callable, Sequence
+from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar
 
 from pydantic import Field
@@ -36,6 +44,26 @@ NOT_INHERITED = frozenset(
 )
 
 current_target: ContextVar[str | None] = ContextVar("stutters_target", default=None)
+
+log = logging.getLogger(__name__)
+
+FANOUT_ALL = "*"
+DEFAULT_FANOUT_CONCURRENCY = 4
+# A fan-out read's result (C74); each tool's output schema is widened to accept it (fanout_output_schema).
+FANOUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "instances": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {"result": {}, "error": {"type": "string"}},
+            },
+        },
+        "partial": {"type": "boolean"},
+    },
+    "required": ["instances", "partial"],
+}
 
 
 def parse_target_names(spec: str | None, default: str) -> list[str]:
@@ -131,9 +159,117 @@ class TargetState(dict[str, Any]):
         return list(self.per_target)
 
 
-def with_target_argument(fn: F, names: list[str], default: str) -> F:  # noqa: UP047
+def fanout_names(value: Any, names: Sequence[str]) -> list[str] | None:
+    """The instances an `instance` value fans out to: all of `names` for '*', the listed ones (in order, each
+    once) for 'a,b'. None when the value names one instance or is unset. Unknown names: InvalidRequest."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text == FANOUT_ALL:
+        return list(names)
+    if "," not in text:
+        return None
+    picked: list[str] = []
+    for raw in text.split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        if name not in names:
+            raise InvalidRequest(f"Unknown instance {name!r}; configured: {', '.join(names)}")
+        if name not in picked:
+            picked.append(name)
+    if not picked:
+        raise InvalidRequest(f"instance={value!r} names no instance; configured: {', '.join(names)}")
+    return picked
+
+
+def fanout_legs(value: Any, names: Sequence[str]) -> int:
+    """How many appliance calls an `instance` value makes (1 unless it fans out); never raises."""
+    try:
+        picked = fanout_names(value, names)
+    except InvalidRequest:
+        return 1
+    return len(picked) if picked else 1
+
+
+def fanout_output_schema(schema: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A tool's output schema widened so a fan-out result also validates (clients check structured content
+    against it). `$defs` and FastMCP's result wrapping (`{"result": <value>}` for str, list... returns, whose
+    `properties.result` clients read) stay at the root."""
+    if schema is None:
+        return None
+    if schema.get("x-fastmcp-wrap-result"):
+        out = {k: v for k, v in schema.items() if k != "required"}
+        out["anyOf"] = [{"required": schema.get("required", ["result"])}, FANOUT_SCHEMA]
+        return out
+    inner = {k: v for k, v in schema.items() if k != "$defs"}
+    out = {"type": "object", "anyOf": [inner, FANOUT_SCHEMA]}
+    if "$defs" in schema:
+        out["$defs"] = schema["$defs"]
+    return out
+
+
+def _leg_value(value: Any) -> tuple[Any, str]:
+    """(structured value, text) of one instance's result: a ToolResult's structured content (or its text,
+    e.g. a markdown table), else the JSON-able return value."""
+    from fastmcp.tools import ToolResult
+    from pydantic_core import to_jsonable_python
+
+    if isinstance(value, ToolResult):
+        text = "\n".join(str(getattr(c, "text", "")) for c in value.content)
+        return (value.structured_content if value.structured_content is not None else text), text
+    data = to_jsonable_python(value)
+    return data, data if isinstance(data, str) else json.dumps(data, separators=(",", ":"), default=str)
+
+
+def _leg_error(e: Exception, scrub: Callable[[str], str] | None) -> str:
+    from fastmcp.exceptions import ToolError
+
+    from stutters_mcp_core.errors import UpstreamError
+
+    message = str(e) or type(e).__name__
+    if not isinstance(e, ToolError | InvalidRequest | UpstreamError | ValueError):
+        log.warning("fan-out leg failed with %s", type(e).__name__)
+        message = f"{type(e).__name__}: {message}"
+    return scrub(message) if scrub is not None else message
+
+
+def fanout_result(legs: dict[str, tuple[bool, Any, str]]) -> Any:
+    """The fan-out ToolResult from {instance: (ok, value or error, text)}."""
+    from fastmcp.tools import ToolResult
+
+    instances: dict[str, dict[str, Any]] = {}
+    blocks: list[str] = []
+    for name, (ok, value, text) in legs.items():
+        instances[name] = {"result": value} if ok else {"error": value}
+        blocks.append(f"## instance {name}\n{text}" if ok else f"## instance {name}: error\n{value}")
+    failed = [n for n, (ok, _, _) in legs.items() if not ok]
+    # TODO(C30 #82): when Page.note lands, also say which instances failed in the page note.
+    payload = {"instances": instances, "partial": bool(failed)}
+    header = (
+        f"partial: {len(failed)} of {len(legs)} instances failed ({', '.join(failed)})"
+        if failed
+        else f"all {len(legs)} instances answered"
+    )
+    return ToolResult(content="\n\n".join([header, *blocks]), structured_content=payload)
+
+
+def with_target_argument(  # noqa: UP047
+    fn: F,
+    names: list[str],
+    default: str,
+    *,
+    fanout: bool = False,
+    concurrency: int = DEFAULT_FANOUT_CONCURRENCY,
+    scrub: Callable[[str], str] | None = None,
+) -> F:
     """Wrap a tool so it takes an optional `instance` (one of `names`) and runs with it selected. Sync tools
-    stay sync (FastMCP runs them in a worker thread, which inherits the context variable)."""
+    stay sync (FastMCP runs them in a worker thread, which inherits the context variable).
+
+    `fanout` (read tools): `instance` also takes '*' or 'a,b'; the tool then runs once per instance (at most
+    `concurrency` at a time; a sync tool runs them one after another in its worker thread) and returns
+    `fanout_result`. An instance that fails is reported with its error (`scrub` masks secrets in it) and
+    `partial: true`; the others still answer. Without `fanout`, such a value is refused (InvalidRequest)."""
     import typing
 
     try:
@@ -152,39 +288,96 @@ def with_target_argument(fn: F, names: list[str], default: str) -> F:  # noqa: U
         raise ValueError(
             f"{fn.__name__} already has an {ARGUMENT!r} parameter; it can't be multi-instance wrapped"
         )
-    choices = Literal[tuple(names)]  # type: ignore[valid-type]
-    annotation = Annotated[
-        choices | None,  # type: ignore[valid-type]
-        Field(description=f"Which appliance instance to use: {', '.join(names)} (default: {default})."),
-    ]
+    annotation: Any
+    if fanout:
+        one = "|".join(re.escape(n) for n in names)
+        annotation = Annotated[
+            str | None,
+            Field(
+                description=f"Which appliance instance to use: {', '.join(names)} (default: {default}). "
+                f"'*' (every instance) or a comma list such as '{names[0]},{names[1]}' runs this read on "
+                "each and returns {instances: {name: {result} or {error}}, partial}.",
+                pattern=rf"^\s*(\*|({one})(\s*,\s*({one}))*\s*,?)\s*$",
+                json_schema_extra={"x-fanout": True},
+            ),
+        ]
+    else:
+        choices = Literal[tuple(names)]  # type: ignore[valid-type]
+        annotation = Annotated[
+            choices | None,
+            Field(description=f"Which appliance instance to use: {', '.join(names)} (default: {default})."),
+        ]
 
-    def select(kwargs: dict[str, Any]) -> Any:
+    def select(kwargs: dict[str, Any]) -> tuple[list[str] | None, Token[str | None] | None]:
+        """Pops `instance`: (the instances to fan out to, None), or (None, the token selecting the one)."""
         target = kwargs.pop(ARGUMENT, None)
-        if target is not None and target not in names:  # FastMCP validates the enum first; direct calls
+        picked = fanout_names(target, names)
+        if picked is not None:
+            if not fanout:
+                raise InvalidRequest(
+                    f"{fn.__name__} changes the appliance, so it runs on one instance: instance={target!r} "
+                    f"(several instances) is only for read tools. Name one of: {', '.join(names)}."
+                )
+            return picked, None
+        if isinstance(target, str):
+            target = target.strip()
+        if target is not None and target not in names:  # FastMCP validates the schema first; direct calls
             raise InvalidRequest(f"Unknown instance {target!r}; configured: {', '.join(names)}")
-        return current_target.set(target or default)
+        return None, current_target.set(target or default)
 
     wrapper: Callable[..., Any]
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            token = select(kwargs)
-            try:
-                return await fn(*args, **kwargs)
-            finally:
-                current_target.reset(token)
+            picked, token = select(kwargs)
+            if picked is None:
+                assert token is not None
+                try:
+                    return await fn(*args, **kwargs)
+                finally:
+                    current_target.reset(token)
+            gate = asyncio.Semaphore(max(1, concurrency))
+
+            async def leg(name: str) -> tuple[bool, Any, str]:
+                async with gate:
+                    token = current_target.set(name)
+                    try:
+                        value, text = _leg_value(await fn(*args, **dict(kwargs)))
+                    except Exception as e:  # noqa: BLE001 - one instance failing doesn't fail the others
+                        message = _leg_error(e, scrub)
+                        return False, message, message
+                    finally:
+                        current_target.reset(token)
+                    return True, value, text
+
+            results = await asyncio.gather(*(leg(n) for n in picked))
+            return fanout_result(dict(zip(picked, results, strict=True)))
 
         wrapper = async_wrapper
     else:
 
         @functools.wraps(fn)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            token = select(kwargs)
-            try:
-                return fn(*args, **kwargs)
-            finally:
-                current_target.reset(token)
+            picked, token = select(kwargs)
+            if picked is None:
+                assert token is not None
+                try:
+                    return fn(*args, **kwargs)
+                finally:
+                    current_target.reset(token)
+            legs: dict[str, tuple[bool, Any, str]] = {}
+            for name in picked:  # a sync tool's legs run in turn, in its worker thread
+                token = current_target.set(name)
+                try:
+                    value, text = _leg_value(fn(*args, **dict(kwargs)))
+                    legs[name] = (True, value, text)
+                except Exception as e:  # noqa: BLE001
+                    message = _leg_error(e, scrub)
+                    legs[name] = (False, message, message)
+                finally:
+                    current_target.reset(token)
+            return fanout_result(legs)
 
         wrapper = sync_wrapper
 
