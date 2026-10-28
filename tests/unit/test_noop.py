@@ -171,6 +171,20 @@ async def test_confirm_on_a_target_that_already_matches(api: Any, caplog: pytest
     assert noop["confirm_dropped"] is True
 
 
+async def test_noop_leaves_a_token_for_another_tool(api: Any) -> None:
+    """A confirm token for a different tool is not this change's: a no-op must not drop it."""
+    async with Client(server()) as c:
+        other = (await c.call_tool("demo_set_ntp_fleet", {"servers": ["198.51.100.7"]})).structured_content
+        out = (
+            await c.call_tool("demo_set_ntp", {"servers": CURRENT, "confirm": other["confirm"]})
+        ).structured_content
+        assert out["status"] == "no_change" and "dropped" not in out["note"]
+        applied = await c.call_tool(
+            "demo_set_ntp_fleet", {"servers": ["198.51.100.7"], "confirm": other["confirm"]}
+        )
+    assert applied.structured_content["status"] == "applied"
+
+
 async def test_noop_metric(api: Any) -> None:
     REGISTRY.reset()
     metrics.enable()

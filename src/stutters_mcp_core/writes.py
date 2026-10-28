@@ -821,9 +821,20 @@ def _no_change(
         extra["instance"] = target
     if plan.noop_reason:
         extra["reason"] = plan.noop_reason
+    dropped = False
     if confirm is not None:
-        store.cancel(confirm)
-        extra["confirm_dropped"] = True
+        # Only a token issued for this change (same tool and target, this caller or a two-person
+        # approver) is dropped: a token for another tool or user is left alone.
+        token_tool = tool if target is None else f"{tool}@{target}"
+        pending = store.peek(confirm)
+        if (
+            pending is not None
+            and pending.tool == token_tool
+            and (pending.caller == caller or pending.two_person)
+        ):
+            store.cancel(confirm)
+            dropped = True
+            extra["confirm_dropped"] = True
     out: dict[str, Any] = {
         "status": "no_change",
         "action": plan.summary,
@@ -834,7 +845,7 @@ def _no_change(
     if plan.details:
         out["details"] = plan.details
     out["note"] = NO_CHANGE_NOTE
-    if confirm is not None:
+    if dropped:
         out["note"] += " The confirm token given was dropped."
     _emit(ctx, "noop", tool, caller, plan.summary, **extra)
     return out
