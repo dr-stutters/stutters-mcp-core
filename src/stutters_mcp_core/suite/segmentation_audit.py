@@ -265,7 +265,8 @@ def suite_segmentation_audit(
         inv.append(
             f"CML, {where_lab}: {tool_ref('cml_get_layer3_addresses')}(lab) and pick one test host per "
             "segment (a host or a loopback in that segment's VPN/VN, not a router's other interface). Record "
-            "the node and IP; a segment with no test host is 'untested'."
+            "the node, the IP and, for a router interface or loopback, its VRF (a service VPN or VN); a "
+            "segment with no test host is 'untested'."
         )
 
     seg_scope = (
@@ -303,9 +304,11 @@ def suite_segmentation_audit(
         steps.append(
             f"Observed verdict: {tool_ref('cml_check_reachability')}(lab, nodes=[<test host of A>], "
             "targets=[<test IP of every other segment>], count=3), one call per source segment (up to 20 "
-            "targets each); pass wait_seconds=0 (the network is converged; a timeout is the verdict). Any "
-            "reply is 'reachable', none is 'unreachable'. This is ICMP: for a pair whose only allowed "
-            "service is TCP/UDP, say the ping proves the deny side only"
+            "targets each), with vrf=<the test host's VRF> when it is a router interface or loopback (a "
+            "ping from the global table proves nothing about the segment and would hide a leak); pass "
+            "wait_seconds=0 (the network is converged; a timeout is the verdict). Any reply is 'reachable', "
+            "none is 'unreachable'. This is ICMP: for a pair whose only allowed service is TCP/UDP, say the "
+            "ping proves the deny side only (an unreachable ping there is not over_blocked)"
             + (", and use the FMC device trace for the service." if plan.has("fmc") else ".")
         )
     else:

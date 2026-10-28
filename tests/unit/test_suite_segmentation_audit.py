@@ -112,6 +112,7 @@ async def test_all_servers() -> None:
     observed = _section(text, "5. Observed verdict", "6. Status")
     assert "`cml_check_reachability`(lab, nodes=[<test host of A>]" in observed
     assert "use the FMC device trace for the service" in observed
+    assert "vrf=<the test host's VRF>" in observed and "would hide a leak" in observed
     assert "lab 'secure-branch'" in text
 
     # The evidence pack: markdown plus one JSON document that parses once placeholders are filled.
@@ -149,7 +150,7 @@ async def test_some_servers_skip_the_rest() -> None:
     for peer in ("ise", "fmc", "catc"):
         assert f"- {peer} leg skipped: server not connected" in text
     assert all(r.startswith(("catsdwan_", "cml_")) for r in find_tool_refs(text, suite.PEERS))
-    assert "the ping proves the deny side only." in text and "FMC device trace" not in text
+    assert "(an unreachable ping there is not over_blocked)." in text and "FMC device trace" not in text
 
     only_cml = await _render({"servers": "cml"})
     assert "Intended verdict per pair" not in only_cml and "`cml_check_reachability`" in only_cml
