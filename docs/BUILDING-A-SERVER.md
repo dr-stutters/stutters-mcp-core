@@ -310,8 +310,23 @@ product's own log and event stamps in `ServerSpec(log_timestamps="...")`, e.g. `
 no zone"`. Timeline prompts subtract each server's `offset_seconds` before merging. A status that does not
 go through `ApiClient` can call `stutters_mcp_core.clock.observe(url, date_header, sent=, received=)`.
 
-Aggregating tools that use `fetch_all` must check `page.complete` and say when results are
-partial. List tools get this for free: `Page.more`/`next_offset` covers APIs that don't report a total.
+**Output integrity (C30).** Aggregating tools that use `fetch_all` must not present a cut collection as
+the whole truth. A capped `fetch_all` page comes back with `complete=False`, `partial=True` and a `note`;
+carry it into the output with `page_of(rows, limit=, offset=, source=page)` (or `note=` / `partial=`) for
+`list_result`, or `object_result(summary, source=page)` for an aggregate. Where the items feed a safety
+check (a delete's "still assigned?" / "how many members?" count), pass `fetch_all(..., on_partial="raise")`:
+a cut collection raises `PartialCollection` instead of passing the check on half the data. List tools get
+paging for free: `Page.more`/`next_offset` covers APIs that don't report a total.
+`python -m stutters_mcp_core.testing.partial_lint src/<pkg> --calls fetch_all,all` (or
+`discarded_complete(...)` in a unit test) lists call sites that keep only `.items`; mark a deliberate one
+with `# partial-ok: <reason>`.
+
+Markdown tables show at most 10 columns. Past that, `to_markdown` keeps `id`, and adds
+`(+N columns not shown: ...; use response_format=json)`; pass `columns=` to `list_result` to pick the ten
+that matter. A get tool's object over `MCP_MAX_RESPONSE_CHARS` is cut by field, not mid-string: the
+largest list fields are dropped whole, the reply stays valid JSON with `structured_content`, and
+`truncated_fields` names each one. Say where to fetch them with
+`object_result(obj, fetch_hints={"rules": "fmc_list_access_rules(policy=...)"})`.
 
 ## 6a. `check` preflight (core 0.14.0)
 

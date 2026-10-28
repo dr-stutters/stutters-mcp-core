@@ -16,7 +16,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+from stutters_mcp_core.errors import UpstreamError
 
 if TYPE_CHECKING:
     from stutters_mcp_core.http.client import ApiClient
@@ -46,6 +48,10 @@ class Page:
     offset: int
     total: int | None = None  # None when the API doesn't say
     more: bool = False  # with total None: the fetch stopped at `limit`, so more items may exist
+    # partial: the items were derived from a collection that was cut (a `fetch_all` cap), so totals,
+    # counts and "not found" answers built from them may be wrong. `note` says so in the tool output.
+    partial: bool = False
+    note: str | None = None
 
     @property
     def next_offset(self) -> int | None:
@@ -65,6 +71,10 @@ class Page:
             m["total"] = self.total
         if self.next_offset is not None:
             m["next_offset"] = self.next_offset
+        if self.partial:
+            m["partial"] = True
+        if self.note:
+            m["note"] = self.note
         return m
 
 
@@ -205,9 +215,35 @@ class NoPaging:
         return Page(everything[offset : offset + limit], offset, len(everything))
 
 
-def page_of(items: list[Any], *, limit: int, offset: int = 0) -> Page:
-    """Slice an in-memory list (for derived/filtered results)."""
-    return Page(items[offset : offset + limit], offset, len(items))
+PARTIAL_NOTE = (
+    "Partial results: the source collection was larger than the read cap, so this answer may be incomplete."
+)
+
+
+class PartialCollection(UpstreamError):
+    """`fetch_all(on_partial="raise")` hit its cap: an answer built from the items would be wrong."""
+
+
+def page_of(
+    items: list[Any],
+    *,
+    limit: int,
+    offset: int = 0,
+    note: str | None = None,
+    partial: bool = False,
+    source: Page | None = None,
+) -> Page:
+    """Slice an in-memory list (for derived/filtered results).
+
+    Pass `source=` (the `fetch_all` page the items came from) to carry its partial flag and note, or
+    `partial=` / `note=` directly; `list_result` renders both."""
+    if source is not None:
+        partial = partial or source.partial or not source.complete
+        if note is None:
+            note = source.note
+    if partial and note is None:
+        note = PARTIAL_NOTE
+    return Page(items[offset : offset + limit], offset, len(items), partial=partial, note=note)
 
 
 async def fetch_all(
@@ -218,14 +254,31 @@ async def fetch_all(
     *,
     cap: int = 10_000,
     max_page: int | None = None,
+    on_partial: Literal["note", "raise"] = "note",
 ) -> Page:
-    """Every item (up to `cap`), for tools that aggregate or search a whole collection. Check
-    `page.complete`: when False the collection was larger than `cap` and results are partial; say
-    so in the tool output."""
+    """Every item (up to `cap`), for tools that aggregate or search a whole collection.
+
+    When the collection is larger than `cap` the page comes back with `complete=False`,
+    `partial=True` and a `note` that `list_result` / `object_result(source=page)` put in the output.
+    Pass `on_partial="raise"` where the items feed a safety check (a delete's "is it still
+    assigned / in use?" count): a cut collection then raises `PartialCollection` instead of
+    letting the check pass on half the data."""
     if max_page is None:
         page = await pager.fetch_page(client, path, params, limit=cap, offset=0)
     else:
         page = await pager.fetch_page(client, path, params, limit=cap, offset=0, max_page=max_page)
     if not page.complete:
         log.warning("fetch_all(%s) hit the %d-item cap; results are partial", path, cap)
+        size = f"{page.total} items" if page.total is not None else f"more than {cap} items"
+        if on_partial == "raise":
+            raise PartialCollection(
+                f"{path} has {size}, more than the {cap}-item read cap, so the check this tool makes "
+                "would run on part of the data. Narrow the request (a filter or a smaller scope) and "
+                "try again."
+            )
+        page.partial = True
+        page.note = (
+            f"Partial results: {path} has {size}; only the first {len(page.items)} were read "
+            f"(cap {cap}), so totals and 'not found' answers may be incomplete."
+        )
     return page

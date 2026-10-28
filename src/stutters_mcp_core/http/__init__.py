@@ -11,11 +11,13 @@ from stutters_mcp_core.http.auth import (
 )
 from stutters_mcp_core.http.client import ApiClient, default_error_detail
 from stutters_mcp_core.http.paging import (
+    PARTIAL_NOTE,
     NoPaging,
     OffsetLimit,
     Page,
     PageNumber,
     Pager,
+    PartialCollection,
     dig,
     fetch_all,
     page_of,
@@ -33,6 +35,8 @@ __all__ = [
     "Page",
     "PageNumber",
     "Pager",
+    "PartialCollection",
+    "PARTIAL_NOTE",
     "RateLimiter",
     "StaticHeaderAuth",
     "Token",

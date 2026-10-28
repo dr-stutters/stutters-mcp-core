@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from fastmcp.tools import ToolResult
 
-from stutters_mcp_core.http.paging import Page
+from stutters_mcp_core.http.paging import PARTIAL_NOTE, Page
 
 ResponseFormat = Literal["json", "markdown"]
 
@@ -139,17 +139,27 @@ def _cell(v: Any) -> str:
 
 
 def to_markdown(rows: list[dict[str, Any]], *, columns: list[str] | None = None, max_cols: int = 10) -> str:
+    """A Markdown table. Without `columns`, the first `max_cols` keys become columns (`id` is always
+    kept when the rows have one) and a closing line names the columns left out, so the model knows
+    to ask for `response_format=json` instead of assuming the table is the whole record."""
     if not rows:
         return "_No results._"
     cols = list(columns or [])
+    hidden: list[str] = []
     if not cols:
+        every: list[str] = []
         for r in rows:
             for k in r:
-                if k not in cols:
-                    cols.append(k)
-        cols = cols[:max_cols]
+                if k not in every:
+                    every.append(k)
+        cols = every[:max_cols]
+        if "id" in every and "id" not in cols and max_cols > 0:
+            cols = [*cols[: max_cols - 1], "id"]
+        hidden = [c for c in every if c not in cols]
     lines = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     lines += ["| " + " | ".join(_cell(r.get(c, "")) for c in cols) + " |" for r in rows]
+    if hidden:
+        lines += ["", f"(+{len(hidden)} columns not shown: {', '.join(hidden)}; use response_format=json)"]
     return "\n".join(lines)
 
 
@@ -177,9 +187,13 @@ def list_result(
         items = items[: max(1, len(items) * 3 // 4)]
         truncated = True
     # Keep the source page's "more" signal (APIs without a total), and add our own truncation.
-    meta = Page(items, page.offset, page.total, more=page.more or truncated).meta()
-    if truncated:
-        meta["note"] = f"Output truncated to fit the size limit; {hint}."
+    meta = Page(items, page.offset, page.total, more=page.more or truncated, partial=page.partial).meta()
+    # The page's own note (a `fetch_all` cap, a `page_of(note=)`) and our truncation note both show.
+    notes = [
+        n for n in (f"Output truncated to fit the size limit; {hint}." if truncated else "", page.note) if n
+    ]
+    if notes:
+        meta["note"] = " ".join(notes)
     if extra:
         extra = dict(extra)
         # A tool's own note must not hide the truncation warning: keep both.
@@ -194,12 +208,134 @@ def list_result(
     return ToolResult(content=dumps(payload), structured_content=payload)
 
 
-def object_result(obj: Any, *, fmt: ResponseFormat = "json", shape: bool = True) -> ToolResult:
+# Fields structural truncation never drops: they say what the object is.
+_KEEP_FIELDS = frozenset({"id", "uuid", "name", "type", "kind", "partial", "note"})
+
+
+def _fields(data: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
+    """Every field reachable through dict keys alone (not through list elements), deepest last."""
+    out: list[tuple[tuple[str, ...], Any]] = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            p = (*path, str(k))
+            if str(k) not in _KEEP_FIELDS:
+                out.append((p, v))
+            out += _fields(v, p)
+    return out
+
+
+def _drop(data: dict[str, Any], path: tuple[str, ...]) -> None:
+    cur: Any = data
+    for part in path[:-1]:
+        cur = cur[part]
+    del cur[path[-1]]
+
+
+def _fits(data: Any) -> bool:
+    return len(dumps(data)) <= _max_chars
+
+
+def shrink_object(
+    data: dict[str, Any], *, fetch_hints: dict[str, str] | None = None, note: str | None = None
+) -> dict[str, Any]:
+    """Drop whole fields, largest list first, until `data` fits the size budget.
+
+    Returns the smaller object (still valid JSON, every kept field intact) plus `truncated_fields`:
+    per dropped field its dotted path, size, and (from `fetch_hints`, keyed by dotted path or
+    top-level name) the tool or argument that fetches it; and a `note` (`note` first, if given).
+    The result can still be over budget when one protected field alone is too big."""
+    hints = fetch_hints or {}
+    final_note = f"{note} {_SHRINK_NOTE}" if note else _SHRINK_NOTE
+    out = json.loads(dumps(data))  # a deep copy we can cut, with exotic values already stringified
+    dropped: list[dict[str, Any]] = []
+
+    def framed() -> dict[str, Any]:
+        return {**out, "truncated_fields": dropped, "note": final_note}
+
+    while not _fits(framed()):
+        fields = _fields(out)
+        if not fields:
+            break
+        # Lists first (the usual culprit: rules, members, interfaces), then anything else; biggest first.
+        path, value = max(fields, key=lambda f: (isinstance(f[1], list), len(dumps(f[1]))))
+        entry: dict[str, Any] = {"field": ".".join(path), "chars": len(dumps(value))}
+        if isinstance(value, list):
+            entry["items"] = len(value)
+        hint = hints.get(entry["field"]) or hints.get(path[0])
+        if hint:
+            entry["fetch"] = hint
+        _drop(out, path)
+        dropped.append(entry)
+    return framed()
+
+
+_SHRINK_NOTE = (
+    "Object too large for one response: the fields named in truncated_fields were left out whole; every "
+    "other field is complete. Fetch them with the tool or argument named per field, or narrow the request."
+)
+
+
+def object_result(
+    obj: Any,
+    *,
+    fmt: ResponseFormat = "json",
+    shape: bool = True,
+    note: str | None = None,
+    partial: bool = False,
+    source: Page | None = None,
+    fetch_hints: dict[str, str] | None = None,
+) -> ToolResult:
+    """Package one object, enforcing the response size budget.
+
+    An object over the budget is cut structurally (`shrink_object`): the largest list fields are
+    dropped whole, the result stays valid JSON with `structured_content`, and `truncated_fields`
+    names what is missing (with `fetch_hints={"rules": "fmc_list_access_rules"}` saying where to get
+    it). `note=` / `partial=` / `source=` (a `fetch_all` page the object was built from) add a
+    `note` and `partial: true` so an aggregate built on a cut collection says so."""
     data = compact(obj) if shape else obj
+    if source is not None:
+        partial = partial or source.partial or not source.complete
+        note = note or source.note
+    if partial and not note:
+        note = PARTIAL_NOTE
+    if isinstance(data, dict) and (note or partial):
+        data = dict(data)
+        if partial:
+            data["partial"] = True
+        if note:
+            data["note"] = f"{data['note']} {note}" if data.get("note") and data["note"] != note else note
     text = dumps(data)
     if len(text) > _max_chars:
-        cut = text[:_max_chars] + '..."[truncated: request fewer fields or a narrower object]"'
-        return ToolResult(content=cut)
+        if isinstance(data, dict):
+            data = shrink_object(data, fetch_hints=fetch_hints, note=note)
+            text = dumps(data)
+            if len(text) <= _max_chars:
+                if fmt == "markdown":
+                    return ToolResult(content=kv_markdown(data))
+                return ToolResult(content=text, structured_content=data)
+        elif isinstance(data, list):
+            items = list(data)
+            while len(items) > 1 and len(dumps(items)) > _max_chars - 400:
+                items = items[: max(1, len(items) * 3 // 4)]
+            if _fits(items):
+                payload = {
+                    "results": items,
+                    "returned": len(items),
+                    "total": len(data),
+                    "note": (
+                        f"Output truncated to the first {len(items)} of {len(data)} items "
+                        "to fit the size limit."
+                    ),
+                }
+                return ToolResult(content=dumps(payload), structured_content=payload)
+        # One indivisible value (a huge string or protected field): keep the reply valid JSON.
+        payload = {
+            "truncated": True,
+            "chars": len(text),
+            "text": text[: max(0, _max_chars - 300)],
+            "note": "Object too large for one response and not divisible by field; narrow the request.",
+        }
+        return ToolResult(content=dumps(payload), structured_content=payload)
     if fmt == "markdown" and isinstance(data, dict):
         return ToolResult(content=kv_markdown(data))
     if isinstance(data, dict):
