@@ -48,6 +48,7 @@ from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.secrets import scrub_text
 from stutters_mcp_core.targets import target_name
+from stutters_mcp_core.toolsets import ToolsetGate, normalise, tags_for
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -192,7 +193,13 @@ class ToolRegistrar:
         description: str | None = None,
         task: bool = False,
         redact: Mapping[str, ArgRedactor] | None = None,
+        toolset: str | Iterable[str] | None = None,
     ) -> Callable[[F], F]:
+        sets = normalise(toolset, name or "tool")
+        self.toolsets.declare(sets)  # known even when the tier is off, so <P>_TOOLSETS can name it
+        if sets:
+            tags = {*(tags or set()), *tags_for(sets)}
+
         def deco(fn: F) -> F:
             tool_name = name or fn.__name__
             if not tool_name.startswith(self.prefix + "_"):
@@ -203,6 +210,8 @@ class ToolRegistrar:
             if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
                 self.withheld[tool_name] = tier
                 return fn
+            if not self.toolsets.registers(tool_name, sets, always=tool_name in self.core_tools):
+                return fn  # C31: not in the toolsets <P>_TOOLSETS loads
             if task and not inspect.iscoroutinefunction(fn):
                 raise ValueError(
                     f"{tool_name}: task=True needs an async function (background tasks run async)"
@@ -273,10 +282,12 @@ class ToolRegistrar:
         description: str | None = None,
         task: bool = False,
         redact: Mapping[str, ArgRedactor] | None = None,
+        toolset: str | Iterable[str] | None = None,
     ) -> Callable[[F], F]:
         """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
         SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
-        {"lines": config_mask.mask_config_value} logs it through a function."""
+        {"lines": config_mask.mask_config_value} logs it through a function. `toolset`: the area(s) the
+        tool belongs to, for <P>_TOOLSETS (stutters_mcp_core.toolsets)."""
         return self._register(
             Tier.READ,
             title=title,
@@ -287,6 +298,7 @@ class ToolRegistrar:
             description=description,
             task=task,
             redact=redact,
+            toolset=toolset,
         )
 
     def write(
@@ -300,10 +312,12 @@ class ToolRegistrar:
         description: str | None = None,
         task: bool = False,
         redact: Mapping[str, ArgRedactor] | None = None,
+        toolset: str | Iterable[str] | None = None,
     ) -> Callable[[F], F]:
         """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
         SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
-        {"lines": config_mask.mask_config_value} logs it through a function."""
+        {"lines": config_mask.mask_config_value} logs it through a function. `toolset`: the area(s) the
+        tool belongs to, for <P>_TOOLSETS (stutters_mcp_core.toolsets)."""
         return self._register(
             Tier.WRITE,
             title=title,
@@ -314,6 +328,7 @@ class ToolRegistrar:
             description=description,
             task=task,
             redact=redact,
+            toolset=toolset,
         )
 
     def prompt(
@@ -352,10 +367,12 @@ class ToolRegistrar:
         description: str | None = None,
         task: bool = False,
         redact: Mapping[str, ArgRedactor] | None = None,
+        toolset: str | Iterable[str] | None = None,
     ) -> Callable[[F], F]:
         """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
         SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
-        {"lines": config_mask.mask_config_value} logs it through a function."""
+        {"lines": config_mask.mask_config_value} logs it through a function. `toolset`: the area(s) the
+        tool belongs to, for <P>_TOOLSETS (stutters_mcp_core.toolsets)."""
         return self._register(
             Tier.DANGEROUS,
             title=title,
@@ -366,7 +383,13 @@ class ToolRegistrar:
             description=description,
             task=task,
             redact=redact,
+            toolset=toolset,
         )
+
+    @property
+    def toolsets(self) -> ToolsetGate:
+        """The server's toolset selection and what it loaded (C31), shared by every registrar."""
+        return ToolsetGate.for_server(self.mcp, self.settings)
 
 
 # --- preview / confirm --------------------------------------------------------------------

@@ -65,6 +65,14 @@ from stutters_mcp_core.prompts import AUTO_ARG_DOC, render_args, rendered_text, 
 from stutters_mcp_core.settings import BaseServerSettings
 from stutters_mcp_core.suite import PACK, SuitePrompt, is_suite_prompt, pending_tools
 from stutters_mcp_core.suite import PEERS as SUITE_PEERS
+from stutters_mcp_core.testing.budget import (
+    SurfaceBudget,
+    SurfaceSize,
+    assert_surface_budget,
+    size_of,
+    surface_budget_problems,
+    surface_size,
+)
 from stutters_mcp_core.testing.partial_lint import discarded_complete
 from stutters_mcp_core.testing.scenario import assert_scenarios, load_scenario, scenario_problems
 from stutters_mcp_core.vocabulary import vocabulary_problems, warn_vocabulary
@@ -72,12 +80,15 @@ from stutters_mcp_core.vocabulary import vocabulary_problems, warn_vocabulary
 __all__ = [
     "as_caller",
     "SNAPSHOT_UPDATE_ENV",
+    "SurfaceBudget",
+    "SurfaceSize",
     "ToolManifest",
     "UndoWarning",
     "assert_inbound_references",
     "assert_prompt_contract",
     "assert_prompt_snapshots",
     "assert_scenarios",
+    "assert_surface_budget",
     "assert_suite_pack",
     "assert_tool_contract",
     "build_manifest",
@@ -97,6 +108,8 @@ __all__ = [
     "render_prompts",
     "scenario_problems",
     "suite_pack_problems",
+    "surface_budget_problems",
+    "surface_size",
     "tool_contract_problems",
     "undo_problems",
     "vocabulary_problems",
@@ -133,12 +146,16 @@ async def tool_contract_problems(
     prefix: str,
     *,
     noop_calls: Mapping[str, Mapping[str, Any] | Iterable[Mapping[str, Any]]] | None = None,
+    budget: SurfaceBudget | None = None,
 ) -> list[str]:
     """Everything wrong with the server's tool surface, as human-readable strings.
 
     `noop_calls` ({tool: args, or a list of args}) are write-tool calls that, on the test's mocked
     appliance, find the target already in the requested state (C71): each is called without `confirm`
-    and must answer `status: no_change` with no confirm token (`noop_result_problems`)."""
+    and must answer `status: no_change` with no confirm token (`noop_result_problems`).
+
+    `budget` (C31, `SurfaceBudget`): limits on the total description and instruction characters, the tool
+    count and each description; growth past them fails until the test raises the number."""
     problems: list[str] = []
     async with Client(mcp) as client:
         tools = await client.list_tools()
@@ -185,6 +202,8 @@ async def tool_contract_problems(
                 continue
             if not (isinstance(schema, dict) and (schema.get("description") or schema.get("enum"))):
                 problems.append(f"{where}: parameter '{pname}' has no description")
+    if budget is not None:
+        problems += surface_budget_problems(size_of(tools, mcp.instructions), budget)
     return problems
 
 

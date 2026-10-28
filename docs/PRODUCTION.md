@@ -25,6 +25,12 @@ by tool registration (deny / allow lists), shown in every preview under `policy`
 | `MCP_BLAST_RADIUS_OVERRIDES` | `fmc_deploy=5,cml_*=100` | Per-tool limits (an exact name wins; otherwise the smallest matching glob). |
 | `MCP_TWO_PERSON_TOOLS` | `@dangerous,fmc_deploy` | The confirm token must be redeemed by a **different** caller. |
 
+`<P>_TOOLSETS` (C31; `FMC_TOOLSETS`, `ISE_TOOLSETS`, ...) loads only some areas of a server's tool surface,
+for clients with tool limits or a tight context: `troubleshoot,objects` loads those toolsets, `-policy` all but
+one, `all,-policy` the same; an exclusion wins. Tools a server leaves untagged and `<prefix>_status` always load;
+the deny/allow lists and tier switches still apply. `<prefix>_status` reports `server.toolsets` (available,
+loaded, unknown names), and an unknown name is also a startup warning. Each server lists its toolsets in its README.
+
 **Tool selectors** (deny, allow, two-person): comma-separated shell globs over tool names plus tier
 selectors `@read`, `@write`, `@dangerous`. `<prefix>_status` and the two-person tools (`review_change`,
 `list_pending_changes`, `cancel_pending_change`) are never withheld. Status lists withheld tools under `server.safety.withheld_tools`.
