@@ -234,6 +234,13 @@ Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loade
   call `register_secret` only for credentials they obtain some other way.
 - Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
   shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
+- Tool arguments in the audit `tool_call` event, confirmation dialogs and two-person
+  `<prefix>_review_change` (C28): secret-named arguments (`password`, `reg_key`, `nat_id`, `community`,
+  ...) and `SecretStr`-annotated parameters are masked; every string has credential shapes and IOS /
+  NX-OS config secrets scrubbed (`enable secret`, `username ... secret|password`, `snmp-server community`,
+  `key 7 ...`, `crypto isakmp key`, `tacacs-server key`, ...; variable references such as
+  `${LAB_ENABLE}` stay visible). A server masks other arguments with
+  `@reg.write(redact={"blob": True, "lines": mask_config_value})` (`stutters_mcp_core.config_mask`).
 - `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and
   masks the configured secret values in error text.
 - Never logged: the HTTP startup log names tokens, not values; `<server> token` prints the raw token only

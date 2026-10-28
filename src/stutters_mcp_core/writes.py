@@ -30,9 +30,11 @@ import inspect
 import json
 import logging
 import os
+import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Iterable
+import typing
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
@@ -42,7 +44,6 @@ from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from stutters_mcp_core.errors import InvalidRequest
-from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.inbound_auth import current_caller
 from stutters_mcp_core.policy import InstanceRules, SafetyPolicy
 from stutters_mcp_core.secrets import scrub_text
@@ -51,6 +52,7 @@ from stutters_mcp_core.targets import target_name
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
+    from stutters_mcp_core.audit import ArgRedactor
     from stutters_mcp_core.settings import BaseServerSettings
 
 audit = logging.getLogger("stutters_mcp_core.audit")
@@ -99,6 +101,42 @@ def annotations_for(
     )
 
 
+def _is_secret_annotation(ann: Any) -> bool:
+    """SecretStr / SecretBytes, also inside Optional, a union or Annotated (or as a string annotation)."""
+    from pydantic import SecretBytes, SecretStr
+
+    if ann is SecretStr or ann is SecretBytes:
+        return True
+    if isinstance(ann, str):
+        return bool(re.search(r"\bSecret(?:Str|Bytes)\b", ann))
+    return any(_is_secret_annotation(a) for a in typing.get_args(ann))
+
+
+def secret_parameters(fn: Callable[..., Any]) -> set[str]:
+    """The parameters of `fn` annotated SecretStr (or SecretBytes, Optional or Annotated forms)."""
+    try:
+        hints = typing.get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001 - unresolvable forward references: fall back to the raw annotations
+        hints = {}
+    out: set[str] = set()
+    for pname, param in inspect.signature(fn).parameters.items():
+        if _is_secret_annotation(hints.get(pname, param.annotation)):
+            out.add(pname)
+    return out
+
+
+def _register_redactors(tool: str, fn: Callable[..., Any], redact: Mapping[str, ArgRedactor] | None) -> None:
+    from stutters_mcp_core.audit import register_arg_redactors
+
+    params = inspect.signature(fn).parameters
+    unknown = sorted(set(redact or {}) - set(params))
+    if unknown:
+        raise ValueError(f"{tool}: redact= names arguments the tool doesn't take: {', '.join(unknown)}")
+    redactors: dict[str, ArgRedactor] = {p: True for p in secret_parameters(fn)}
+    redactors.update(redact or {})
+    register_arg_redactors(tool, redactors)
+
+
 class ToolRegistrar:
     """Registers tools with tier-appropriate annotations, skipping tiers that are disabled, and
     records every tool's tier (used by the contract linter and the status tool)."""
@@ -140,11 +178,13 @@ class ToolRegistrar:
         tags: set[str] | None,
         description: str | None = None,
         task: bool = False,
+        redact: Mapping[str, ArgRedactor] | None = None,
     ) -> Callable[[F], F]:
         def deco(fn: F) -> F:
             tool_name = name or fn.__name__
             if not tool_name.startswith(self.prefix + "_"):
                 raise ValueError(f"Tool {tool_name!r} must start with {self.prefix}_")
+            _register_redactors(tool_name, fn, redact)  # checked even when the tier is off
             if not tier_enabled(self.settings, tier):
                 return fn
             if not self.policy.registers(tool_name, tier.value, always=tool_name in self.core_tools):
@@ -200,7 +240,11 @@ class ToolRegistrar:
         tags: set[str] | None = None,
         description: str | None = None,
         task: bool = False,
+        redact: Mapping[str, ArgRedactor] | None = None,
     ) -> Callable[[F], F]:
+        """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
+        SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
+        {"lines": config_mask.mask_config_value} logs it through a function."""
         return self._register(
             Tier.READ,
             title=title,
@@ -210,6 +254,7 @@ class ToolRegistrar:
             tags=tags,
             description=description,
             task=task,
+            redact=redact,
         )
 
     def write(
@@ -222,7 +267,11 @@ class ToolRegistrar:
         tags: set[str] | None = None,
         description: str | None = None,
         task: bool = False,
+        redact: Mapping[str, ArgRedactor] | None = None,
     ) -> Callable[[F], F]:
+        """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
+        SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
+        {"lines": config_mask.mask_config_value} logs it through a function."""
         return self._register(
             Tier.WRITE,
             title=title,
@@ -232,6 +281,7 @@ class ToolRegistrar:
             tags=tags,
             description=description,
             task=task,
+            redact=redact,
         )
 
     def prompt(
@@ -269,7 +319,11 @@ class ToolRegistrar:
         tags: set[str] | None = None,
         description: str | None = None,
         task: bool = False,
+        redact: Mapping[str, ArgRedactor] | None = None,
     ) -> Callable[[F], F]:
+        """`redact`: arguments to mask in the audit log and previews, beyond secret-named ones and
+        SecretStr-annotated parameters (always masked): {"reg_key": True} masks the value,
+        {"lines": config_mask.mask_config_value} logs it through a function."""
         return self._register(
             Tier.DANGEROUS,
             title=title,
@@ -279,6 +333,7 @@ class ToolRegistrar:
             tags=tags,
             description=description,
             task=task,
+            redact=redact,
         )
 
 
@@ -574,7 +629,7 @@ async def preview_or_apply(
                     store.cancel(held)
                     return _declined(ctx, out, tool, caller, plan, answer, store.ttl, extra)
                 held = store.issue(token_tool, args, plan.fingerprint, caller)
-                if request_input(elicit_message(tool, out, _shown_args(args)), held):
+                if request_input(elicit_message(tool, out, _shown_args(args, tool)), held):
                     _emit(ctx, "preview", tool, caller, plan.summary, confirm_mode="elicit", **extra)
                     out["note"] = "Waiting for the user's answer in the client's confirmation dialog."
                     return out  # replaced by the InputRequiredResult (ConfirmInputMiddleware)
@@ -583,7 +638,7 @@ async def preview_or_apply(
             if channel == "push":
                 _emit(ctx, "preview", tool, caller, plan.summary, confirm_mode="elicit", **extra)
                 answer = await ask_user(
-                    ctx, elicit_message(tool, out, _shown_args(args)), wait_seconds=float(store.ttl)
+                    ctx, elicit_message(tool, out, _shown_args(args, tool)), wait_seconds=float(store.ttl)
                 )
                 if answer == "accept":
                     return await _apply_elicited(ctx, tool, caller, target, plan, apply, replan, tier, extra)
@@ -628,8 +683,10 @@ async def preview_or_apply(
                 for k, v in out.items()
                 if k not in ("confirm", "how_to_apply", "expires_in_seconds", "preview_id")
             }
-            pending.preview = mask_secrets(pending.preview)
-            pending.preview["args"] = _shown_args(args)
+            from stutters_mcp_core.audit import redact_value
+
+            pending.preview = redact_value(pending.preview)  # config secrets in details too (C28)
+            pending.preview["args"] = _shown_args(args, tool)
         _emit(ctx, "preview", tool, caller, plan.summary, **extra)
         return out
 
@@ -753,10 +810,10 @@ def _emit(ctx: Context, event: str, tool: str, caller: str, summary: str, **extr
     record_write(server, tool, event)
 
 
-def _shown_args(args: dict[str, Any]) -> dict[str, Any]:
+def _shown_args(args: dict[str, Any], tool: str | None = None) -> dict[str, Any]:
     from stutters_mcp_core.audit import redact_args
 
-    return redact_args(args)
+    return redact_args(args, tool=tool)
 
 
 def caller_identity(ctx: Context | None, caller: str) -> dict[str, Any] | None:
