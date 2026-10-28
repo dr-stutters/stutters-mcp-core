@@ -304,6 +304,29 @@ it with `assert_suite_pack(server_rw, "<prefix>", "tests/manifests", pending=[..
 client keeps (no server state). Build them with `snapshot.register_snapshot_tools(reg, take, ...)`; the
 contract (blob schema, item and metric rules, severities) is [SNAPSHOTS.md](SNAPSHOTS.md).
 
+### Backup age for the backup rail (C73)
+
+With `MCP_REQUIRE_BACKUP_HOURS` set, covered (by default dangerous) previews show the newest backup's age and
+are blocked when it is too old or unknown. Core can't tell the age itself: register one hook, from a read the
+server already has (the product's backup list or last-backup status):
+
+```python
+from stutters_mcp_core.backup_rail import BackupAge, register_backup_age
+
+async def backup_age(ctx: Context) -> BackupAge:
+    newest = await newest_backup(get_client(ctx))          # None when there is no backup
+    if newest is None:
+        return BackupAge(None, "FMC backups", "no backup found")
+    return BackupAge.from_time(newest["date"], "FMC backups", newest["name"])   # datetime, ISO or epoch (ms)
+
+register_backup_age(reg, backup_age)                       # in one of the server's register functions
+```
+
+The hook runs per instance (through `ctx`) on every covered preview and again at confirm, so keep it to one or
+two requests. A server without a hook is not broken: covered changes are blocked as "age unknown" until an
+operator waives the check (`<prefix>_waive_backup_check`). Don't raise for "no backup": return
+`BackupAge(None, source, detail)`; an exception is shown (scrubbed) as the reason the age is unknown.
+
 ### Topology diagrams (C65)
 
 A tool that draws a topology takes `format: Literal["mermaid", "drawio"]` (alongside `response_format` for

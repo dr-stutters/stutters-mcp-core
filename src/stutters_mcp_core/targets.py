@@ -41,6 +41,7 @@ TARGET_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 NOT_INHERITED = frozenset(
     {"url", "username", "password", "token", "verify_ssl", "ca_bundle"}
     | {"read_only", "two_person", "change_window", "max_blast_radius"}  # per-instance write rules (C15)
+    | {"require_backup_hours"}  # per-instance backup-age rail (C73)
 )
 
 current_target: ContextVar[str | None] = ContextVar("stutters_target", default=None)

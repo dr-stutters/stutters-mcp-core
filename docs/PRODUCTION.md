@@ -107,6 +107,37 @@ add to; `protected`: the patterns it must never reach; keep protected checked fi
 `active_override(ctx, scope)` wherever the rail is checked. `Plan(two_person=True)` forces a second caller
 for any write.
 
+### Backup age before dangerous changes (roadmap C73)
+
+Every Cisco upgrade and migration guide (FMC, ISE, Catalyst Center before group-based policy migration,
+SD-WAN Manager) says to take a backup first. With this rail on, every covered preview shows the newest
+backup's age under `backup`, and is **blocked** when the backup is older than the limit or its age is
+unknown (the server has no backup-age hook, the hook failed, or there is no backup). The age is checked again
+at confirm. Tool tiers are unchanged.
+
+| Variable | Example | Effect |
+|---|---|---|
+| `MCP_REQUIRE_BACKUP_HOURS` | `24` | The server-wide limit in hours. Unset = off. |
+| `<P>_REQUIRE_BACKUP_HOURS`, `<P>_<NAME>_REQUIRE_BACKUP_HOURS` | `72` | The limit for one appliance (the default instance, or a named one); it wins over the server-wide value there, and `0` turns the rail off for that appliance. Never inherited between instances. |
+| `MCP_REQUIRE_BACKUP_TOOLS` | `fmc_deploy,@dangerous` | Which tools the rail covers (tool globs and `@write` / `@dangerous`); default `@dangerous`. Read tools never are. |
+
+- The preview's `backup` block: `max_age_hours`, `age` (`3d 4h`, or `unknown`), `age_hours`, `source` (where
+  the server looked), `detail`, `taken_at`, `ok`. Audit events (`preview`, `blocked`, `refused`, `applied`)
+  carry the age, limit and outcome under `backup`.
+- A no-change answer (`Plan.noop`, C71) skips the rail, like every other rail; dry-run previews still show
+  the age.
+- **Waiving it for a while** (a C70 override): with `MCP_RUNTIME_OVERRIDES=true` and the rail configured,
+  `<prefix>_waive_backup_check(tools, until, reason)` lifts the blocker for the named tools (globs; `['*']`
+  for every covered tool) until `until`. It is previewed, needs a reason, is confirmed by a second person
+  unless `MCP_OVERRIDE_TWO_PERSON=false`, lapses on its own and is gone after a restart. Previews keep
+  showing the age, plus the waiver under `backup.waived`. Taking a backup is the better fix.
+- `<prefix>_status` reports the setting under `server.rails.backup` (`required`, `max_age_hours`, `tools`,
+  `hook`, and `server_hours` / `instance_hours` when set); an active waiver is listed under
+  `server.overrides` (scope `backup`).
+
+Servers' hooks read the backups they already list (fmc_list_backups, ise_get_backup_status,
+catc_get_backup_status / catc_list_backups, catsdwan_list_backups); see BUILDING-A-SERVER.md.
+
 ## Confirm in the client's dialog (roadmap C67, [ADR-002](adr/002-write-tiers-and-preview-tokens.md) amendment)
 
 `MCP_CONFIRM_MODE` picks how a previewed change is confirmed:

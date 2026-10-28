@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from stutters_mcp_core import __version__, metrics
 from stutters_mcp_core.audit import AuditMiddleware
+from stutters_mcp_core.backup_rail import BackupRail, rail_configured, register_waiver_tool
 from stutters_mcp_core.clock import clock_status
 from stutters_mcp_core.errors import InvalidRequest, UpstreamError
 from stutters_mcp_core.formatting import mask_secrets, set_max_chars
@@ -180,6 +181,7 @@ def build_server(
             shared: dict[str, Any] = {
                 "previews": PreviewStore(ttl=settings.mcp_confirm_ttl),
                 "overrides": OverrideStore.from_settings(settings),
+                "backup_rail": backup_rail,  # C73
                 "policy": policy,
                 "roles": roles,
                 "confirm_mode": settings.mcp_confirm_mode,  # C67
@@ -206,8 +208,15 @@ def build_server(
         instructions += DANGEROUS_INSTRUCTIONS
     policy = settings.safety_policy()
     roles = settings.role_map()
+    backup_rail = BackupRail.from_settings(settings)
     if settings.mcp_enable_writes and policy.active:
         instructions += _policy_instructions(policy)
+    if settings.mcp_enable_writes and rail_configured(list(configs.values())):
+        instructions += (
+            "\nBackup-age rail (MCP_REQUIRE_BACKUP_HOURS): previews of covered changes show the newest "
+            "backup's age under `backup` and are blocked when it is too old or unknown; take a backup "
+            "first.\n"
+        )
     if settings.mcp_enable_writes and settings.mcp_confirm_mode != "token":
         instructions += CONFIRM_MODE_INSTRUCTIONS[settings.mcp_confirm_mode]
 
@@ -268,6 +277,12 @@ def build_server(
     if (policy.two_person or instance_two_person or override_two_person) and settings.mcp_enable_writes:
         _register_review(reg, spec)
         register_pending_tools(reg, spec.prefix)  # C66: list / cancel what awaits a second person
+    if (
+        settings.mcp_enable_writes
+        and settings.mcp_runtime_overrides
+        and rail_configured(list(configs.values()))
+    ):
+        register_waiver_tool(reg)  # C73: lift the backup-age blocker for a while (a C70 override)
     for fn in register:
         fn(reg)
     if spec_sources is not None:
@@ -388,6 +403,10 @@ def _register_status(
         rules = InstanceRules.from_settings(target_cfg)
         if rules.active:
             out["server"]["instance_rules"] = rules.describe()
+        rail = ctx.lifespan_context.get("backup_rail")
+        if isinstance(rail, BackupRail):
+            hook = getattr(reg.mcp, "_stutters_backup_age", None) is not None
+            out["server"]["rails"] = {"backup": rail.describe(target_cfg, hook=hook)}
         if reg.task_tools:
             backend = settings.mcp_tasks_url.split("://", 1)[0]
             out["server"]["tasks"] = {"backend": backend, "tools": sorted(reg.task_tools)}

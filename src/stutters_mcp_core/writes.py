@@ -514,8 +514,8 @@ class Plan:
     `noop` (C71): the target is already in the requested state (the tool compared the current state it
     read for the fingerprint with what was asked for). `preview_or_apply` then returns
     `{"status": "no_change", ...}` with no confirm token, never calls `apply`, writes a `noop` audit event
-    and skips the rails (blast-radius limits, two-person, change window, dry-run, elicitation): there is
-    nothing to confirm. `noop_reason` says why, e.g. "NTP servers already 192.0.2.1, 192.0.2.2".
+    and skips the rails (blast-radius limits, two-person, change window, dry-run, elicitation, backup age):
+    there is nothing to confirm. `noop_reason` says why, e.g. "NTP servers already 192.0.2.1, 192.0.2.2".
     `Plan.blockers` still win over `noop` (a request that can't be valid isn't "already applied").
 
     `undo` (C81): how to back the change out, for the method of procedure and the audit log. An
@@ -735,6 +735,13 @@ def _rails(
     return policy, info, blockers, refusals, two_person
 
 
+async def _backup_rail(ctx: Context, tool: str, tier: str | None) -> tuple[dict[str, Any] | None, list[str]]:
+    """The backup-age rail (C73, stutters_mcp_core.backup_rail): the preview's `backup` block and blockers."""
+    from stutters_mcp_core.backup_rail import backup_check
+
+    return await backup_check(ctx, tool, tier)
+
+
 async def preview_or_apply(
     ctx: Context,
     *,
@@ -749,7 +756,8 @@ async def preview_or_apply(
     the freshly computed plan and apply. `args` must be every argument except `confirm`.
 
     The safety rails (stutters_mcp_core.policy) are applied here: dry-run and change-window refusals,
-    blast-radius limits and two-person confirmation. With no rails configured the output is unchanged.
+    blast-radius limits and two-person confirmation, and the backup-age rail (MCP_REQUIRE_BACKUP_HOURS,
+    stutters_mcp_core.backup_rail). With no rails configured the output is unchanged.
 
     With MCP_CONFIRM_MODE=auto|elicit and a client that supports elicitation (stutters_mcp_core.confirm),
     the preview call asks the user to confirm in the client and applies on accept. `replan`, when given,
@@ -776,10 +784,16 @@ async def preview_or_apply(
     token_tool = tool if target is None else f"{tool}@{target}"  # a token only works on its target
     tier = _tier_of(ctx, tool)
     policy, info, blockers, refusals, two_person = _rails(ctx, tool, tier, plan, target)
+    backup, backup_blockers = await _backup_rail(ctx, tool, tier)
+    blockers += backup_blockers
     mode = confirm_mode(ctx)
     extra: dict[str, Any] = {}
     if target is not None:
         extra["instance"] = target
+    if backup is not None:
+        from stutters_mcp_core.backup_rail import audit_brief
+
+        extra["backup"] = audit_brief(backup)
     if info:
         extra["policy"] = info
     elif plan.blast_radius is not None:
@@ -805,6 +819,8 @@ async def preview_or_apply(
             out["blast_unknown"] = unknown_text
         if info:
             out["policy"] = info
+        if backup is not None:
+            out["backup"] = backup
         if identity is not None:
             out["requested_by"] = identity
         if blockers:
@@ -1030,6 +1046,7 @@ async def _apply_elicited(
             raise InvalidRequest(f"Can't apply: {'; '.join(reasons)}. Nothing was changed; preview again.")
         plan = fresh
     _, _, blockers, refusals, _ = _rails(ctx, tool, tier, plan, target)
+    blockers += (await _backup_rail(ctx, tool, tier))[1]
     if refusals or blockers:
         reasons = refusals + blockers
         _emit(ctx, "refused", tool, caller, plan.summary, reasons=reasons, **extra)

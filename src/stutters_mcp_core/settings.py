@@ -143,6 +143,8 @@ class BaseServerSettings(BaseSettings):
     two_person: bool = False
     change_window: str | None = None
     max_blast_radius: int | None = Field(default=None, ge=0)
+    # Backup-age rail for this appliance (C73): wins over MCP_REQUIRE_BACKUP_HOURS; 0 = off here.
+    require_backup_hours: float | None = Field(default=None, ge=0)
     # Fields a named instance never inherits from the default instance (G10), beyond URL, credentials,
     # TLS checking and secrets; products list appliance-specific ones, e.g. {"domain"} for FMC.
     per_instance_fields: ClassVar[frozenset[str]] = frozenset()
@@ -245,6 +247,14 @@ class BaseServerSettings(BaseSettings):
     # (secrets are resolved before this model exists); the field documents it and shows in the model.
     mcp_secret_loaders: str | None = Field(default=None, validation_alias=_alias("MCP_SECRET_LOADERS"))
     mcp_two_person_tools: str | None = Field(default=None, validation_alias=_alias("MCP_TWO_PERSON_TOOLS"))
+    # Backup-age rail (C73, stutters_mcp_core.backup_rail): covered previews show the newest backup's age
+    # and are blocked when it is older than this many hours or unknown; off by default.
+    mcp_require_backup_hours: float | None = Field(
+        default=None, gt=0, validation_alias=_alias("MCP_REQUIRE_BACKUP_HOURS")
+    )
+    mcp_require_backup_tools: str | None = Field(
+        default=None, validation_alias=_alias("MCP_REQUIRE_BACKUP_TOOLS")
+    )
     # Runtime, time-boxed overrides of a server's own rails (C70, stutters_mcp_core.overrides); off.
     mcp_runtime_overrides: bool = Field(default=False, validation_alias=_alias("MCP_RUNTIME_OVERRIDES"))
     mcp_override_max_minutes: int = Field(
@@ -292,6 +302,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_allow_tools",
         "mcp_blast_radius_overrides",
         "mcp_two_person_tools",
+        "mcp_require_backup_tools",
         "mcp_roles",
         "mcp_caller_rate_limit_by_role",
         "mcp_oauth_provider",
@@ -313,6 +324,7 @@ class BaseServerSettings(BaseSettings):
         "mcp_metrics_port",
         "mcp_audit_log_max_mb",
         "mcp_caller_rate_limit",
+        "mcp_require_backup_hours",
         mode="before",
     )
     @classmethod
@@ -369,7 +381,7 @@ class BaseServerSettings(BaseSettings):
         self.target_names()
         return self
 
-    @field_validator("change_window", "max_blast_radius", mode="before")
+    @field_validator("change_window", "max_blast_radius", "require_backup_hours", mode="before")
     @classmethod
     def _blank_instance_rule(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
@@ -402,6 +414,9 @@ class BaseServerSettings(BaseSettings):
         from stutters_mcp_core.policy import SafetyPolicy
 
         SafetyPolicy.from_settings(self)  # raises ValueError naming the bad setting
+        from stutters_mcp_core.backup_rail import BackupRail
+
+        BackupRail.from_settings(self)  # MCP_REQUIRE_BACKUP_TOOLS
         self.role_map()  # also reads and checks MCP_ROLES_FILE
         return self
 
