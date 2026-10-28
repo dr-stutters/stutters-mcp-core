@@ -10,6 +10,7 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import mcp.types as mt
@@ -25,13 +26,58 @@ audit = logging.getLogger("stutters_mcp_core.audit")
 
 MAX_ARG_CHARS = 300
 
+# Per-tool argument redactors (C28): {tool: {argument: redactor}}. A redactor is True (mask the whole
+# value) or a function returning the value to log (`config_mask.mask_config_value` for config text).
+# Filled by ToolRegistrar from `redact=` and from SecretStr-annotated parameters; used by the audit
+# `tool_call` event, previews shown in a confirmation dialog and two-person `<prefix>_review_change`.
+ArgRedactor = Callable[[Any], Any] | bool
+# Argument names that are secrets when a tool takes them (an SNMP community string) but not as fields in
+# API responses (a BGP route's `community: 65000:1`), so they stay out of formatting.SECRET_KEY_RE.
+ARG_SECRET_KEYS: set[str] = {"community"}
+_ARG_REDACTORS: dict[str, dict[str, ArgRedactor]] = {}
 
-def redact_args(args: dict[str, Any] | None) -> dict[str, Any]:
+
+def register_arg_redactors(tool: str, redactors: Mapping[str, ArgRedactor]) -> None:
+    """Redact these arguments of `tool` wherever its arguments are shown (replaces earlier entries)."""
+    clean: dict[str, ArgRedactor] = {k: r for k, r in redactors.items() if r is not False}
+    if clean:
+        _ARG_REDACTORS[tool] = clean
+    else:
+        _ARG_REDACTORS.pop(tool, None)
+
+
+def arg_redactors(tool: str | None) -> dict[str, ArgRedactor]:
+    """The redactors registered for `tool` (an `@instance` suffix is ignored); {} when none."""
+    if not tool:
+        return {}
+    return dict(_ARG_REDACTORS.get(tool.partition("@")[0], {}))
+
+
+def redact_args(
+    args: dict[str, Any] | None,
+    *,
+    tool: str | None = None,
+    redactors: Mapping[str, ArgRedactor] | None = None,
+) -> dict[str, Any]:
+    """`args` as they may be logged or shown to an approver: secret-named arguments masked, the tool's
+    registered redactors applied (`tool`, or `redactors` given directly), credential shapes and config
+    secrets scrubbed in every string, and each argument cut to MAX_ARG_CHARS."""
+    hooks = {**arg_redactors(tool), **(redactors or {})}
     out: dict[str, Any] = {}
     for k, v in (args or {}).items():
-        if is_secret_key(k) and v not in (None, ""):
+        if v in (None, ""):
+            out[k] = v
+            continue
+        hook = hooks.get(k)
+        if is_secret_key(k) or k in ARG_SECRET_KEYS or hook is True:
             out[k] = MASK
             continue
+        if callable(hook):
+            try:
+                v = hook(v)
+            except Exception:  # noqa: BLE001 - a failing redactor must not leak the value
+                out[k] = MASK
+                continue
         v = redact_value(v)
         text = json.dumps(v, default=str)
         out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
@@ -71,7 +117,7 @@ class AuditMiddleware(Middleware):
             "server": self.server_name,
             "tool": context.message.name,
             "caller": current_caller(),
-            "args": redact_args(context.message.arguments),
+            "args": redact_args(context.message.arguments, tool=context.message.name),
         }
         if self.roles is not None:
             event["role"] = self.roles.role_for(event["caller"]).value

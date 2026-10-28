@@ -109,6 +109,18 @@ def test_list_result_truncates_to_budget() -> None:
 def test_redact_args() -> None:
     out = redact_args({"password": "p", "name": "x", "body": "y" * 1000})
     assert out["password"] == "********" and out["name"] == "x" and out["body"].endswith("(truncated)")
+    out = redact_args(
+        {
+            "reg_key": "cisco123",
+            "nat_id": "n1",
+            "community": "Publ1c",
+            "lines": ["hostname r1", "enable secret 0 Sup3r"],
+            "auth_token": "t0k",
+            "description": None,
+        }
+    )
+    assert out["reg_key"] == out["nat_id"] == out["community"] == out["auth_token"] == "********"
+    assert out["lines"] == ["hostname r1", "enable secret 0 ********"] and out["description"] is None
 
 
 def test_field_changes() -> None:

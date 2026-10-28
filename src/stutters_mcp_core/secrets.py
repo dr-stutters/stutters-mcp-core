@@ -3,8 +3,10 @@
 Two layers keep credentials out of logs, audit events and `<prefix>_status`:
 
 1. `scrub_text(text)` masks credentials by shape: `user:pass@` in URLs, secret-looking query parameters
-   (`?token=...`, `password=`), and `Authorization`-style `Bearer` / `Basic` values. Used for upstream error
-   messages, the status `url`, and audit `error` fields.
+   (`?token=...`, `password=`), `Authorization`-style `Bearer` / `Basic` values, and the secret on IOS /
+   NX-OS config lines (`enable secret`, `username ... secret`, `snmp-server community`, `key 7 ...`,
+   `crypto isakmp key`; stutters_mcp_core.config_mask). Used for upstream error messages, the status
+   `url`, audit `error` fields and every string in audited arguments and previews.
 2. `install_secret_filter(settings)` masks the actual configured secret values (every `SecretStr` setting,
    the Basic-auth base64, raw `MCP_AUTH_TOKENS` entries, and values passed to `register_secret`) in every
    log record the process creates, via the log record factory, so non-propagating loggers (fastmcp,
@@ -33,6 +35,8 @@ from typing import Any, Protocol, runtime_checkable
 from fastmcp.exceptions import ToolError
 from fastmcp.server.middleware import Middleware
 from pydantic import SecretStr
+
+from stutters_mcp_core.config_mask import mask_command_lines
 
 MASK = "********"  # same as formatting.MASK (not imported: http.client imports this module)
 
@@ -73,7 +77,8 @@ def _secret_key(key: str) -> bool:
 def scrub_text(text: str) -> str:
     """Mask credentials recognisable by shape: URL userinfo, secret-named `key=value` and JSON pairs
     (password, token, secret, api_key, sig...; whole words, so `author=` is left alone), Authorization /
-    Cookie / X-*-Token headers, and bare `Bearer <credential>` values."""
+    Cookie / X-*-Token headers, bare `Bearer <credential>` values, and lines that start like an IOS / NX-OS
+    command carrying a secret ('enable secret 0 x', 'snmp-server community x RO', 'key 7 x')."""
     if not text:
         return text
     text = _URL_USERINFO.sub(lambda m: f"{m.group('scheme')}{MASK}@", text)
@@ -90,7 +95,7 @@ def scrub_text(text: str) -> str:
             return f"{m.group('key')}: {m.group('q2')}{MASK}{m.group('q2')}"
         return m.group(0)
 
-    return _JSON_PAIR.sub(json_pair, text)
+    return mask_command_lines(_JSON_PAIR.sub(json_pair, text))
 
 
 def scrub_url(url: str) -> str:

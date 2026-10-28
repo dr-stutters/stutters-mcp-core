@@ -42,7 +42,9 @@ selectors `@read`, `@write`, `@dangerous`. `<prefix>_status` and the two-person 
 
 **Blast radius.** A write tool sets `Plan(blast_radius=N)` when it can count what a change touches
 (devices a deploy goes to, endpoints affected, rules rewritten). It is shown in the preview. Tools that
-don't count are never limited; each server's README says which tools report it.
+don't count are never limited; each server's README says which tools report it. A dangerous tool that
+can't count states why instead (`blast_unknown: not counted (<reason>)` in the preview, the audit event and
+the two-person listing), so an operator who set the limit sees which changes it can't check.
 
 **Two-person confirm.** The requester previews as usual and gets a token, but can't redeem it. They pass
 the token to a second person (another named bearer token or OAuth identity), whose client calls
@@ -234,6 +236,13 @@ Register them with `MCP_SECRET_LOADERS="vault=my_loaders:VaultLoader,op=my_loade
   call `register_secret` only for credentials they obtain some other way.
 - Upstream error messages (`detail`, redirect `Location`, connection errors) are scrubbed of credential
   shapes; audit `error` fields are scrubbed and tool arguments with secret-looking names are masked.
+- Tool arguments in the audit `tool_call` event, confirmation dialogs and two-person
+  `<prefix>_review_change` (C28): secret-named arguments (`password`, `reg_key`, `nat_id`, `community`,
+  ...) and `SecretStr`-annotated parameters are masked; every string has credential shapes and IOS /
+  NX-OS config secrets scrubbed (`enable secret`, `username ... secret|password`, `snmp-server community`,
+  `key 7 ...`, `crypto isakmp key`, `tacacs-server key`, ...; variable references such as
+  `${LAB_ENABLE}` stay visible). A server masks other arguments with
+  `@reg.write(redact={"blob": True, "lines": mask_config_value})` (`stutters_mcp_core.config_mask`).
 - `<prefix>_status` shows the URL without userinfo, masks secret-looking keys in the product status, and
   masks the configured secret values in error text.
 - Never logged: the HTTP startup log names tokens, not values; `<server> token` prints the raw token only
