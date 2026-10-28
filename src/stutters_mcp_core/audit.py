@@ -1,6 +1,7 @@
 """Structured audit trail: one JSON line per tool call (who, what, how long, outcome).
 
-Write tools additionally log "preview" / "applied" / "apply_failed" events from writes.py. All of it
+Write tools additionally log "preview" / "applied" / "apply_failed" events from writes.py ("noop" when
+the target already matches, C71). All of it
 goes to the `stutters_mcp_core.audit` logger, routed by MCP_AUDIT_LOG (stderr | <file path> | off).
 """
 

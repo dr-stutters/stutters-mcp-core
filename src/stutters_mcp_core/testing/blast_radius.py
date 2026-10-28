@@ -36,6 +36,7 @@ from stutters_mcp_core.writes import Plan, _plan_recorders
 class BlastRadiusReport:
     counted: dict[str, list[int]] = field(default_factory=dict)  # tool -> blast_radius per Plan
     declared: dict[str, list[str]] = field(default_factory=dict)  # tool -> blast_unknown reason per Plan
+    noop: dict[str, list[str]] = field(default_factory=dict)  # tool -> summaries of no-op Plans (C71)
     missing: dict[str, list[str]] = field(default_factory=dict)  # tool -> summaries of Plans with neither
     not_driven: dict[str, str] = field(default_factory=dict)  # tool -> why no Plan was seen
     skipped: dict[str, str] = field(default_factory=dict)
@@ -56,6 +57,7 @@ class BlastRadiusReport:
         lines = self.failures(strict=True)
         lines += [f"counted {t}: {', '.join(map(str, n))}" for t, n in sorted(self.counted.items())]
         lines += [f"declared {t}: {'; '.join(r)}" for t, r in sorted(self.declared.items())]
+        lines += [f"no change {t}: {'; '.join(s)}" for t, s in sorted(self.noop.items())]
         lines += [f"skipped {t}: {why}" for t, why in sorted(self.skipped.items())]
         return "\n".join(lines)
 
@@ -79,7 +81,9 @@ def _skip_reasons(skip: Mapping[str, str] | Iterable[str]) -> dict[str, str]:
 
 
 def _record(report: BlastRadiusReport, tool: str, plan: Plan) -> None:
-    if plan.blast_radius is not None:
+    if plan.noop and not plan.blockers:  # nothing is applied, so there is nothing to count (C71)
+        report.noop.setdefault(tool, []).append(plan.summary)
+    elif plan.blast_radius is not None:
         report.counted.setdefault(tool, []).append(plan.blast_radius)
     elif plan.blast_unknown is not None:
         report.declared.setdefault(tool, []).append(plan.blast_unknown)

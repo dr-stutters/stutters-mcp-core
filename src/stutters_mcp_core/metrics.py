@@ -12,7 +12,8 @@ Series (all prefixed `mcp_`; `server` is the server name, `product` the applianc
     mcp_info{server,version,core_version} 1
     mcp_tool_calls_total{server,tool,outcome}             outcome: ok | error
     mcp_tool_duration_seconds{server,tool}                histogram
-    mcp_write_events_total{server,tool,event}             preview | applied | apply_failed | blocked | refused
+    mcp_write_events_total{server,tool,event}             preview | applied | apply_failed | blocked |
+                                                          refused | noop
     mcp_upstream_requests_total{product,method,status}    status: HTTP code, or timeout | error
     mcp_upstream_duration_seconds{product,method}         histogram
     mcp_upstream_retries_total{product,reason}            reason: HTTP code or timeout | error
