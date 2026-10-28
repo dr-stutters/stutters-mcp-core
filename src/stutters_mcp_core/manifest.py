@@ -13,7 +13,8 @@ servers:
 Format (`"manifest": 1`; keys are sorted so the file diffs cleanly):
 
     {"manifest": 1, "server": "ise-mcp-server", "prefix": "ise", "version": "0.3.0", "core_version": "0.4.0",
-     "tools": {"ise_status": {"tier": "read", "title": "..."}, ...},
+     "tools": {"ise_status": {"tier": "read", "title": "..."},
+               "ise_why_auth_failed": {"tier": "read", "title": "...", "toolsets": ["troubleshoot"]}, ...},
      "prompts": {"ise_quarantine_host": {"uses": ["ise", "fmc"], "tier": "write", "arguments": ["ip", ...],
                                          "references": ["fmc_contain_host", "ise_apply_anc", ...],
                                          "rendered": true}}}
@@ -41,6 +42,7 @@ from fastmcp.server import server as fastmcp_server
 
 from stutters_mcp_core import __version__
 from stutters_mcp_core.prompts import find_tool_refs, render_args, rendered_text
+from stutters_mcp_core.toolsets import toolsets_of
 
 MANIFEST_VERSION = 1
 _TIERS = ("read", "write", "dangerous")
@@ -81,6 +83,9 @@ async def build_manifest(
         title = t.title or (t.annotations.title if t.annotations else None)
         if title:
             entry["title"] = title
+        sets = toolsets_of(t.tags)
+        if sets:
+            entry["toolsets"] = sets  # C31
         tools[t.name] = entry
     prompts: dict[str, dict[str, Any]] = {}
     for p in await mcp.list_prompts(run_middleware=False):

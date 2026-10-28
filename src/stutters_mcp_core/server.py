@@ -277,7 +277,22 @@ def build_server(
             search_example=spec.spec_search_example,
             path_example=spec.spec_path_example,
         )
+    _finish_toolsets(mcp, reg)
     return mcp
+
+
+def _finish_toolsets(mcp: FastMCP[Any], reg: ToolRegistrar) -> None:
+    """C31: warn about <P>_TOOLSETS names no tool declares; tell the model what was left out."""
+    gate = reg.toolsets
+    gate.warn_unknown()
+    if gate.selection.active and gate.hidden:
+        off = sorted({n for sets in gate.hidden.values() for n in sets} - set(gate.members))
+        loaded = ", ".join(sorted(gate.members)) or "none"
+        note = f"\nOnly some toolsets are loaded ({gate.var}={gate.selection.text}): {loaded}"
+        if off:
+            note += f"; not loaded: {', '.join(off)}"
+        note += ". Tools outside them are not available on this server.\n"
+        mcp.instructions = (mcp.instructions or "") + note
 
 
 def _enable_tasks(mcp: FastMCP[Any], settings: BaseServerSettings) -> None:
@@ -398,6 +413,9 @@ def _register_status(
         overrides = ctx.lifespan_context.get("overrides")
         if isinstance(overrides, OverrideStore) and (overrides.enabled or overrides.active()):
             out["server"]["overrides"] = overrides.describe()
+        toolsets = reg.toolsets.describe()
+        if toolsets is not None:
+            out["server"]["toolsets"] = toolsets
         prompts = registered_prompts(reg.mcp)
         if prompts:
             out["server"]["prompts"] = sorted(prompts)

@@ -195,6 +195,11 @@ Rules (enforced by `assert_tool_contract`):
   content, an opaque blob): `@reg.write(redact={"lines": mask_config_value, "blob": True})` masks them in
   the audit log and previews (`stutters_mcp_core.config_mask.mask_config_value` masks IOS / NX-OS config
   secrets line by line). `SecretStr` parameters are masked without it.
+- Toolsets (C31): tag each tool with the area(s) it belongs to, `@reg.read(..., toolset="troubleshoot")` or
+  `toolset=("objects", "policy")` (lowercase names; the tag is `toolset:<name>` next to the tier). Operators
+  then load only some areas with `<P>_TOOLSETS` (`troubleshoot,objects`, `-policy`, `all,-policy`; an exclusion
+  wins). Untagged tools and `<prefix>_status` always load; `<prefix>_status.server.toolsets` reports what loaded
+  and any name no tool declares (also a startup warning). Keep the server's catalogue in its README.
 - Long jobs: `poll_until(...)` with `ctx=ctx`, and mark the tool `@reg.write(..., task=True)` (or read/dangerous)
   so that with `MCP_TASKS=true` it runs as an MCP background task (async functions only; depend on
   `stutters-mcp-core[tasks]`). Without MCP_TASKS the flag does nothing. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.
@@ -397,6 +402,11 @@ async def test_contract():                       # run with writes+dangerous on 
     await assert_prompt_contract(server, "ise", samples={"ise_troubleshoot_endpoint_access": {"mac": "aa:bb:cc:dd:ee:ff"}})
 ```
 
+- Tool-surface budget (C31): `tool_contract_problems(server, "ise", budget=SurfaceBudget(descriptions=45_900,
+  instructions=6_000, tools=145, per_tool=1_000, headroom=0.05))` fails when descriptions, instructions or the
+  tool count grow past the committed numbers, until the same PR raises them (an explicit bump), and with
+  `headroom` when a budget sits too far above use. `surface_size(server)` gives today's numbers, per toolset
+  too; `assert_surface_budget` runs the check alone.
 - Unit tests mock HTTP with `respx` and call tools through `call_tool` or `fastmcp.Client`.
 - Live tests use `live_settings(Settings, "ISE_")`, which reads `.env` and skips when the lab is unreachable.
 - Live write tests create and delete objects named `mcp-test-*`.

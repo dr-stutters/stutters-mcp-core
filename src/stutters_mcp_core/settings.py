@@ -149,6 +149,9 @@ class BaseServerSettings(BaseSettings):
     # Several appliances (G10, ADR-004): <P>_INSTANCES=prod,dr adds instances read from <P>_PROD_URL, ...
     instances: str | None = None
     default_instance: str = "default"
+    # Areas of the tool surface to load (C31, stutters_mcp_core.toolsets), read as <P>_TOOLSETS:
+    # "troubleshoot,objects" loads only those, "-policy" all but one; unset loads every tool.
+    toolsets: str | None = None
 
     # --- MCP server (unprefixed) ----------------------------------------------------------
     mcp_transport: Literal["stdio", "http"] = Field(default="stdio", validation_alias=_alias("MCP_TRANSPORT"))
@@ -287,6 +290,7 @@ class BaseServerSettings(BaseSettings):
         return v
 
     @field_validator(
+        "toolsets",
         "mcp_change_window",
         "mcp_deny_tools",
         "mcp_allow_tools",
@@ -395,6 +399,14 @@ class BaseServerSettings(BaseSettings):
     def _metrics_port_needs_metrics(self) -> BaseServerSettings:
         if self.mcp_metrics_port is not None and not self.mcp_metrics:
             log.warning("MCP_METRICS_PORT is set but MCP_METRICS is not true: no metrics are served")
+        return self
+
+    @model_validator(mode="after")
+    def _toolsets_parse(self) -> BaseServerSettings:
+        from stutters_mcp_core.toolsets import ToolsetSelection
+
+        prefix = str(type(self).model_config.get("env_prefix", "") or "")
+        ToolsetSelection.parse(self.toolsets, var=f"{prefix}TOOLSETS")  # raises ValueError naming it
         return self
 
     @model_validator(mode="after")
