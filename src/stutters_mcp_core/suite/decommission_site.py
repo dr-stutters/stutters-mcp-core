@@ -6,9 +6,10 @@ a DHCP scope and DNS records on Windows. The prompt inventories everything tied 
 previews the removal product by product, removes each product only after the user approves that product's
 preview, and ends with a verify pass that must come back empty. Dangerous tier: it deletes devices and sites.
 
-`catsdwan_remove_device` (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0, so `PENDING_TOOLS` is empty. On an
-older cat-sdwan server the SD-WAN leg falls back to dissociating the edge from its configuration group and
-invalidating it, and says the device record stays.
+`catsdwan_remove_device` (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0 but stays in `PENDING_TOOLS` (the
+prompt's `pending`) until every server's committed catsdwan manifest lists it. On an older cat-sdwan server
+the SD-WAN leg falls back to dissociating the edge from its configuration group and invalidating it, and says
+the device record stays.
 
 The Windows server has no DHCP-scope delete tool and its tools are not preview-first, so the Windows leg
 writes its own preview (the exact cmdlet) and removes the scope with `win_run_powershell_json`.
@@ -75,9 +76,10 @@ LEGS = (
     ),
 )
 
-# Leg tools not shipped yet (the prompt's `pending`, waived by assert_suite_pack). catsdwan_remove_device
-# (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0.
-PENDING_TOOLS: tuple[str, ...] = ()
+# Leg tools not in every server's committed peer manifest yet (the prompt's `pending`, waived by
+# assert_suite_pack). catsdwan_remove_device (cat-sdwan W53, #81) shipped in cat-sdwan 0.7.0; ise's committed
+# catsdwan manifest (0.4.0) predates it (2026-10-28).
+PENDING_TOOLS = ("catsdwan_remove_device",)
 
 # Never removed by this workflow, whatever site they sit in.
 PROTECTED = (

@@ -8,10 +8,11 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from stutters_mcp_core import build_server, suite
+from stutters_mcp_core.manifest import read_tool_manifests
 from stutters_mcp_core.prompts import find_tool_refs, rendered_text
 from stutters_mcp_core.suite import pack_problems
 from stutters_mcp_core.suite.access_review import PENDING_TOOLS, parse_stale_days
-from stutters_mcp_core.testing import assert_prompt_contract, load_tool_manifests, suite_pack_problems
+from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
 
 from . import demo
 from .demo import SPEC, DemoApp, make_settings
@@ -164,8 +165,14 @@ async def test_against_sibling_manifests() -> None:
         pytest.skip("no sibling server checkouts with manifests")
     problems = [p for p in await suite_pack_problems(_server(), "demo", *paths) if NAME in p]
     assert problems == []
-    shipped = set().union(*load_tool_manifests(*paths).values())
-    assert [t for t in PENDING_TOOLS if t in shipped] == []
+    # A pending tool is dropped only once every server's committed copy of its peer's manifest lists it, so
+    # no server's core pin bump starts failing on it (C171).
+    ready = []
+    for tool in PENDING_TOOLS:
+        copies = sorted(SUITE.glob(f"*-mcp-server/tests/manifests/{tool.split('_', 1)[0]}.json"))
+        if copies and all(tool in m.names for m in read_tool_manifests(*copies)):
+            ready.append(tool)
+    assert ready == [], "drop these from PENDING_TOOLS"
 
 
 def test_windows_server_name_maps_to_win() -> None:

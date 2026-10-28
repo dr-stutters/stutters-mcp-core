@@ -293,7 +293,7 @@ def test_core_pack_pending_registry() -> None:
     from stutters_mcp_core.suite import access_review, decommission_site
 
     assert registry.get("suite_access_review") == access_review.PENDING_TOOLS
-    assert "suite_decommission_site" not in registry and decommission_site.PENDING_TOOLS == ()
+    assert registry.get("suite_decommission_site") == decommission_site.PENDING_TOOLS
 
 
 async def test_assert_suite_pack_uses_core_pack(tmp_path: Path) -> None:

@@ -8,10 +8,11 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from stutters_mcp_core import build_server, suite
+from stutters_mcp_core.manifest import read_tool_manifests
 from stutters_mcp_core.prompts import find_tool_refs, rendered_text
 from stutters_mcp_core.suite import pack_problems
 from stutters_mcp_core.suite.decommission_site import PENDING_TOOLS, parse_site, parse_subnets
-from stutters_mcp_core.testing import assert_prompt_contract, load_tool_manifests, suite_pack_problems
+from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
 
 from . import demo
 from .demo import SPEC, DemoApp, make_settings
@@ -39,7 +40,7 @@ def test_in_pack_and_clean() -> None:
     sp = suite.PACK[NAME]
     assert sp.requires == PEERS and sp.meta()["tier"] == "dangerous"
     assert set(PENDING_TOOLS) <= set(sp.tools) and sp.pending == PENDING_TOOLS
-    assert "catsdwan_remove_device" not in PENDING_TOOLS  # shipped in cat-sdwan 0.7.0
+    assert PENDING_TOOLS == ("catsdwan_remove_device",)  # in cat-sdwan 0.7.0, not in ise's copy yet
     assert pack_problems() == []
 
 
@@ -175,16 +176,18 @@ async def test_prompt_kit_and_pending(tmp_path: Path) -> None:
         write(prefix, [t for t in sp.tools if t.startswith(prefix + "_")])
     assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == []
 
-    # catsdwan_remove_device is no longer pending: a cat-sdwan manifest older than 0.7.0 is reported ...
-    write("catsdwan", [t for t in sp.tools if t.startswith("catsdwan_") and t != "catsdwan_remove_device"])
-    problems = [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p]
-    assert problems == [
-        f"suite prompt {NAME}: catsdwan leg calls 'catsdwan_remove_device', which the catsdwan manifest "
+    # A catsdwan manifest older than 0.7.0 (no catsdwan_remove_device): the pending tool is waived without
+    # a `pending=` list, and the old server-side waiver is fine too.
+    write("catsdwan", [t for t in sp.tools if t.startswith("catsdwan_") and t not in PENDING_TOOLS])
+    assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == []
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=list(PENDING_TOOLS))
+    assert [p for p in found if NAME in p] == []
+    # A leg tool that is not pending is still checked.
+    write("catsdwan", [t for t in sp.tools if t.startswith("catsdwan_") and t != "catsdwan_list_devices"])
+    assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == [
+        f"suite prompt {NAME}: catsdwan leg calls 'catsdwan_list_devices', which the catsdwan manifest "
         "does not list"
     ]
-    # ... unless that server waives it itself until it refreshes its copy of the manifest.
-    found = await suite_pack_problems(server, "demo", tmp_path, pending=["catsdwan_remove_device"])
-    assert [p for p in found if NAME in p] == []
 
 
 SUITE = Path(__file__).resolve().parents[3]
@@ -208,5 +211,11 @@ async def test_against_sibling_manifests() -> None:
         pytest.skip("no sibling server checkouts with manifests")
     problems = [p for p in await suite_pack_problems(_server(), "demo", *paths) if NAME in p]
     assert problems == []
-    shipped = set().union(*load_tool_manifests(*paths).values())
-    assert [t for t in PENDING_TOOLS if t in shipped] == []
+    # A pending tool is dropped only once every server's committed copy of its peer's manifest lists it, so
+    # no server's core pin bump starts failing on it (C171).
+    ready = []
+    for tool in PENDING_TOOLS:
+        copies = sorted(SUITE.glob(f"*-mcp-server/tests/manifests/{tool.split('_', 1)[0]}.json"))
+        if copies and all(tool in m.names for m in read_tool_manifests(*copies)):
+            ready.append(tool)
+    assert ready == [], "drop these from PENDING_TOOLS"
