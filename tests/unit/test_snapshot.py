@@ -23,6 +23,7 @@ from stutters_mcp_core.snapshot import (
 )
 from stutters_mcp_core.suite import pack_problems
 from stutters_mcp_core.suite.access_review import PENDING_TOOLS
+from stutters_mcp_core.suite.decommission_site import PENDING_TOOLS as DECOMMISSION_PENDING
 from stutters_mcp_core.testing import assert_prompt_contract, suite_pack_problems
 
 from . import demo
@@ -422,7 +423,8 @@ async def test_pack_against_suite_checkout_manifests() -> None:
         pytest.skip("no sibling server checkouts with manifests")
     server = _suite_server()
     present = {p.stem for p in paths}
-    pending = [t for t in (*SNAPSHOT_TOOLS, *PENDING_TOOLS) if t.split("_", 1)[0] in present]
+    waived = (*SNAPSHOT_TOOLS, *PENDING_TOOLS, *DECOMMISSION_PENDING)
+    pending = [t for t in waived if t.split("_", 1)[0] in present]
     problems = await suite_pack_problems(server, "demo", *paths, pending=pending)
     # A waiver for a tool a server now ships is reported: that is the signal to drop it here.
     assert all("is in `pending` but" in p for p in problems), problems
