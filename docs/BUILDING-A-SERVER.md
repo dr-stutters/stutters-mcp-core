@@ -173,9 +173,17 @@ Rules (enforced by `assert_tool_contract`):
 - Prefer a few task-oriented tools ("why did this auth fail") over many thin CRUD wrappers. `<prefix>_api_call` covers the rest.
 - When a write can count what it touches (devices deployed to, endpoints, rules), set
   `Plan(blast_radius=N)`; operators can cap it (`MCP_MAX_BLAST_RADIUS`, see [PRODUCTION.md](PRODUCTION.md)).
+  A dangerous tool that can't count says why: `Plan(blast_unknown="<reason>")` (the preview shows
+  `blast_unknown: not counted (<reason>)`; the limit can't apply). Every dangerous Plan sets one of the two;
+  `stutters_mcp_core.testing.blast_radius.assert_dangerous_plans_counted(server, samples, skip={...})`
+  previews each dangerous tool on the respx mock and fails on a Plan with neither (C29).
   Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
 - Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
   module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
+- Arguments that carry a secret without a secret-looking name (config lines, a topology, template
+  content, an opaque blob): `@reg.write(redact={"lines": mask_config_value, "blob": True})` masks them in
+  the audit log and previews (`stutters_mcp_core.config_mask.mask_config_value` masks IOS / NX-OS config
+  secrets line by line). `SecretStr` parameters are masked without it.
 - Long jobs: `poll_until(...)` with `ctx=ctx`, and mark the tool `@reg.write(..., task=True)` (or read/dangerous)
   so that with `MCP_TASKS=true` it runs as an MCP background task (async functions only; depend on
   `stutters-mcp-core[tasks]`). Without MCP_TASKS the flag does nothing. Take `wait: bool = True`; when not waiting, return the task id and the tool that checks it.

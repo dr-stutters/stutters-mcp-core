@@ -40,7 +40,6 @@ import mcp.types as mt
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult
 
-from stutters_mcp_core.formatting import mask_secrets
 from stutters_mcp_core.secrets import scrub_text
 
 if TYPE_CHECKING:
@@ -114,13 +113,17 @@ def elicit_message(tool: str, preview: dict[str, Any], shown_args: dict[str, Any
         lines.append(f"Instance: {preview['instance']}")
     if preview.get("blast_radius") is not None:
         lines.append(f"Blast radius: {preview['blast_radius']}")
+    elif preview.get("blast_unknown"):
+        lines.append(f"Blast radius: {preview['blast_unknown']}")
     for effect in preview.get("side_effects") or []:
         lines.append(f"Side effect: {effect}")
     if preview.get("warning"):
         lines.append(f"Warning: {preview['warning']}")
     body = {k: v for k, v in (("preview", preview.get("preview")), ("arguments", shown_args)) if v}
     if body:
-        lines += ["", json.dumps(mask_secrets(body), indent=1, default=str, sort_keys=True)]
+        from stutters_mcp_core.audit import redact_value
+
+        lines += ["", json.dumps(redact_value(body), indent=1, default=str, sort_keys=True)]
     text = "\n".join(lines)
     if len(text) > MAX_MESSAGE:
         text = text[: MAX_MESSAGE - 60].rstrip() + "\n... (truncated; the full preview is in the tool result)"

@@ -315,6 +315,7 @@ async def set_override(
             "it lapses, is cleared, or the server restarts (protected entries stay protected)."
         ],
         two_person=store.two_person,
+        blast_unknown="widens a safety rail for a while; it touches no appliance object itself",
     )
     call_args = dict(args) if args is not None else {"values": dict(values), "until": until, "reason": reason}
 

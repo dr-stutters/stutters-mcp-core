@@ -47,6 +47,8 @@ def _row(store: PreviewStore, token: str, pending: _Pending, caller: str) -> dic
     }
     if preview.get("blast_radius") is not None:
         row["blast_radius"] = preview["blast_radius"]
+    elif preview.get("blast_unknown"):
+        row["blast_unknown"] = preview["blast_unknown"]
     row["you_can_approve"] = pending.caller != caller
     return row
 
