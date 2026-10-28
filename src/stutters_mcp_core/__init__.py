@@ -39,9 +39,11 @@ from stutters_mcp_core.settings import BaseServerSettings, server_config  # noqa
 from stutters_mcp_core.tasks import poll_until  # noqa: E402
 from stutters_mcp_core.writes import (  # noqa: E402
     Confirm,
+    FromResult,
     Plan,
     Tier,
     ToolRegistrar,
+    Undo,
     field_changes,
     preview_or_apply,
 )
@@ -51,6 +53,7 @@ __all__ = [
     "BaseServerSettings",
     "Confirm",
     "Conflict",
+    "FromResult",
     "InvalidRequest",
     "NotFound",
     "Plan",
@@ -61,6 +64,7 @@ __all__ = [
     "TaskFailed",
     "Tier",
     "ToolRegistrar",
+    "Undo",
     "Unreachable",
     "UpstreamError",
     "UpstreamTimeout",

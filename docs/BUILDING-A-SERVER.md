@@ -187,6 +187,26 @@ Rules (enforced by `assert_tool_contract`):
   `noop` audit event and skips the rails (blast-radius limit, two-person, change window, dry-run). `Plan.blockers`
   still win. Prove it with `assert_tool_contract(server, prefix, noop_calls={tool: args})`: each call, on the
   respx mock of the matching state, must answer `no_change` with no `confirm`.
+- Back-out step (C81): every write says how to reverse it with `Plan(undo=...)`. `Undo(tool, args)` names the
+  reversing call; an argument only the apply result knows (a created object's id) is `FromResult("id")`
+  (dotted paths and list indexes: `FromResult("items.0.id")`), or pass a function `result -> args`. A
+  string is a manual step or why there is none: `undo="not reversible: the old shared secret can't be read"`.
+
+  ```python
+  plan = Plan(f"Create access rule {name}", blast_radius=1,
+              undo=Undo("fmc_delete_access_rule", {"policy": policy, "rule": FromResult("id")}))
+  ```
+
+  The preview shows `undo: "back-out: fmc_delete_access_rule(policy=\"lab\", rule=<from the result: id>)"`;
+  the applied result carries `undo: {"tool", "args", "back_out"}` (or `{"back_out": text}`) and the `applied`
+  audit event `undo: {"tool", "args"}` (or the text), with the undo tool's secret and `redact=` arguments
+  masked. No-op and blocked answers carry none. Running the undo is an ordinary preview-first call.
+  Capture the previous value in the Plan when the reversal needs it (an `ise_set_ip_sgt` undo restores the
+  old SGT); masked secrets in an undo mean the model can't replay them, which is the point.
+  `assert_tool_contract` warns (one `UndoWarning`, the test passes) about write and dangerous tools whose
+  source never builds an undo and that didn't preview a Plan with one in the test run; a tool whose Plan
+  is built in a helper goes in `undo_allow={...}` (or `warn_undo=False`), and `undo_problems(server, prefix)`
+  returns the list.
 - Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
   module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
   Read tools also run with `instance='*'` (C74): once per instance, several at a time, so a read must not

@@ -163,6 +163,9 @@ class ToolRegistrar:
             f"{prefix}_cancel_pending_change",
         }
         self.target_names: list[str] = settings.target_names()  # >1: tools get an `instance` argument
+        tool_fns: dict[str, Callable[..., Any]] = getattr(mcp, "_stutters_tool_fns", {})
+        mcp._stutters_tool_fns = tool_fns  # type: ignore[attr-defined]
+        self.tool_fns = tool_fns  # the undecorated functions (the Plan.undo contract warning reads them)
         task_tools: set[str] = getattr(mcp, "_stutters_task_tools", set())
         mcp._stutters_task_tools = task_tools  # type: ignore[attr-defined]
         self.task_tools = task_tools  # tools registered as MCP background tasks (MCP_TASKS)
@@ -255,6 +258,7 @@ class ToolRegistrar:
                 **extra,
             )
             self.tiers[tool_name] = tier
+            self.tool_fns[tool_name] = fn
             return fn
 
         return deco
@@ -379,6 +383,117 @@ def _digest(value: Any) -> str:
     return hmac.new(_DIGEST_KEY, data, hashlib.sha256).hexdigest()
 
 
+_TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class FromResult:
+    """An undo argument taken from the apply result (C81): `FromResult("id")` is the new object's id
+    after a create, `FromResult("items.0.id")` walks dicts and list indexes. Shown in the preview as
+    `<from the result: id>`; resolved after the change is applied."""
+
+    path: str
+
+    def __post_init__(self) -> None:
+        if not self.path.strip():
+            raise ValueError("FromResult needs a path into the apply result, e.g. 'id'")
+
+    def resolve(self, result: Any) -> Any:
+        value = result
+        for part in self.path.split("."):
+            if isinstance(value, Mapping) and part in value:
+                value = value[part]
+            elif (
+                isinstance(value, list | tuple)
+                and part.lstrip("-").isdigit()
+                and -len(value) <= int(part) < len(value)
+            ):
+                value = value[int(part)]
+            else:
+                raise LookupError(f"the apply result has no {self.path!r}")
+        return value
+
+
+UndoArgs = Mapping[str, Any] | Callable[[Any], Mapping[str, Any]]
+
+
+@dataclass(frozen=True)
+class Undo:
+    """The back-out step for a write (C81): the tool call that reverses it.
+
+    `args` is a mapping (values may be `FromResult("id")` for something only the apply result knows, such
+    as a created object's id) or a function `result -> mapping` for anything more involved. The undo is a
+    preview-first call like any other: running it previews the reversal, it never applies by itself."""
+
+    tool: str
+    args: UndoArgs = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.tool, str) or not _TOOL_NAME_RE.match(self.tool):
+            raise ValueError(f"Undo: tool must be a snake_case tool name, got {self.tool!r}")
+        if isinstance(self.args, Mapping):
+            if "confirm" in self.args:
+                raise ValueError("Undo: args must not carry `confirm` (the undo is previewed like any write)")
+            bad = [k for k in self.args if not isinstance(k, str)]
+            if bad:
+                raise ValueError(f"Undo: argument names must be strings, got {bad!r}")
+        elif not callable(self.args):
+            raise ValueError("Undo: args must be a mapping or a function of the apply result")
+
+    def resolve(self, result: Any) -> dict[str, Any]:
+        """The undo arguments once the change is applied (FromResult values and a function filled in)."""
+        raw = self.args(result) if callable(self.args) else self.args
+        if not isinstance(raw, Mapping):
+            raise TypeError(f"Undo args function returned {type(raw).__name__}, not a mapping")
+        return {k: v.resolve(result) if isinstance(v, FromResult) else v for k, v in raw.items()}
+
+
+def _undo_call_text(tool: str, args: Mapping[str, Any] | None) -> str:
+    """'tool(a="x", id=<from the result: id>)' with the undo tool's secret arguments masked."""
+    from stutters_mcp_core.audit import redact_args
+
+    if args is None:
+        return f"{tool}(<arguments from the result>)"
+    plain = {k: v for k, v in args.items() if not isinstance(v, FromResult)}
+    shown = redact_args(plain, tool=tool)
+    parts = []
+    for k, v in args.items():
+        if isinstance(v, FromResult):
+            parts.append(f"{k}=<from the result: {v.path}>")
+        else:
+            parts.append(f"{k}={json.dumps(shown[k], default=str)}")
+    return f"{tool}({', '.join(parts)})"
+
+
+def undo_preview_text(undo: Undo | str) -> str:
+    """The preview line: 'back-out: <tool>(<masked args>)', or 'back-out: <text>' for a manual step or
+    'not reversible (...)'."""
+    if isinstance(undo, str):
+        return f"back-out: {undo.strip()}"
+    return "back-out: " + _undo_call_text(undo.tool, None if callable(undo.args) else undo.args)
+
+
+def undo_applied(undo: Undo | str, result: Any) -> dict[str, Any]:
+    """The `undo` of an applied result and its `applied` audit event: {"tool", "args", "back_out"} with
+    the undo tool's secret arguments masked, or {"back_out": text}. Never raises: when the arguments can't
+    be filled from the result, the step says so (the change itself was applied)."""
+    from stutters_mcp_core.audit import redact_args
+
+    if isinstance(undo, str):
+        return {"back_out": undo.strip()}
+    try:
+        args = undo.resolve(result)
+    except Exception as e:  # noqa: BLE001 - the change is applied; report the undo we can't fill in
+        return {
+            "tool": undo.tool,
+            "back_out": f"{undo.tool}: arguments could not be filled from the result "
+            f"({scrub_text(str(e))[:200]}); look the object up and call it by hand",
+        }
+    # Not cut to the audit length: the model replays these arguments (a previous value can be long).
+    shown = redact_args(args, tool=undo.tool, max_chars=None)
+    return {"tool": undo.tool, "args": shown, "back_out": _undo_call_text(undo.tool, args)}
+
+
 @dataclass
 class Plan:
     """What a write would do: a one-line summary, details for the user, anything that would make it
@@ -401,7 +516,14 @@ class Plan:
     `{"status": "no_change", ...}` with no confirm token, never calls `apply`, writes a `noop` audit event
     and skips the rails (blast-radius limits, two-person, change window, dry-run, elicitation): there is
     nothing to confirm. `noop_reason` says why, e.g. "NTP servers already 192.0.2.1, 192.0.2.2".
-    `Plan.blockers` still win over `noop` (a request that can't be valid isn't "already applied")."""
+    `Plan.blockers` still win over `noop` (a request that can't be valid isn't "already applied").
+
+    `undo` (C81): how to back the change out, for the method of procedure and the audit log. An
+    `Undo(tool, args)` names the reversing call
+    (`Undo("fmc_delete_access_rule", {"rule": FromResult("id")})`);
+    a string is a manual step or why there is none ("not reversible: the old shared secret isn't
+    readable"). The preview shows 'back-out: ...', the applied result carries `undo` and so does the
+    `applied` audit event (secret arguments masked). No-op and blocked answers carry none."""
 
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -413,8 +535,15 @@ class Plan:
     blast_unknown: str | None = None
     noop: bool = False
     noop_reason: str | None = None
+    undo: Undo | str | None = None
 
     def __post_init__(self) -> None:
+        if self.undo is not None:
+            if isinstance(self.undo, str):
+                if not self.undo.strip():
+                    raise ValueError("Plan: undo text needs the back-out step or why there is none")
+            elif not isinstance(self.undo, Undo):
+                raise ValueError("Plan: undo must be Undo(tool, args), a back-out text, or None")
         if self.noop_reason is not None and not self.noop:
             raise ValueError("Plan: noop_reason is only meaningful with noop=True")
         if self.blast_unknown is not None:
@@ -427,6 +556,8 @@ class Plan:
 # Test hook (C29): stutters_mcp_core.testing.blast_radius pushes a list here and preview_or_apply appends
 # (tool, plan) to it. A module list rather than a ContextVar so in-memory clients' server tasks see it.
 _plan_recorders: list[list[tuple[str, Plan]]] = []
+# C81: tools seen building a Plan with `undo` in this process (read by the contract's undo warning).
+_undo_tools: set[str] = set()
 
 
 def _blast_unknown_text(plan: Plan, info: dict[str, Any]) -> str | None:
@@ -635,6 +766,8 @@ async def preview_or_apply(
 
     for recorder in _plan_recorders:
         recorder.append((tool, plan))
+    if plan.undo is not None:
+        _undo_tools.add(tool)
     store = get_previews(ctx)
     caller = current_caller()
     target = target_name()
@@ -680,6 +813,8 @@ async def preview_or_apply(
             out["note"] = "This change can't be applied as it stands; nothing was changed."
             _emit(ctx, "blocked", tool, caller, plan.summary, blockers=blockers, **extra)
             return out
+        if plan.undo is not None:
+            out["undo"] = undo_preview_text(plan.undo)
         if policy is not None and policy.dry_run:
             out["note"] = (
                 "Dry-run mode (MCP_DRY_RUN=true): this preview is all the server will do. Nothing was "
@@ -788,7 +923,7 @@ async def preview_or_apply(
     if pending.two_person:
         extra["requested_by"] = pending.caller
         extra["approved_by"] = caller
-    result = await _apply_change(ctx, tool, caller, plan, apply, extra)
+    result, undo = await _apply_change(ctx, tool, caller, plan, apply, extra)
     out = {"status": "applied", "action": plan.summary}
     if target is not None:
         out["instance"] = target
@@ -797,6 +932,8 @@ async def preview_or_apply(
         out["approved_by"] = caller
     if result is not None:
         out["result"] = result
+    if undo is not None:
+        out["undo"] = undo
     return out
 
 
@@ -897,13 +1034,15 @@ async def _apply_elicited(
         reasons = refusals + blockers
         _emit(ctx, "refused", tool, caller, plan.summary, reasons=reasons, **extra)
         raise InvalidRequest(f"Can't apply: {'; '.join(reasons)}. Nothing was changed.")
-    result = await _apply_change(ctx, tool, caller, plan, apply, {**extra, "confirmed_via": "elicit"})
+    result, undo = await _apply_change(ctx, tool, caller, plan, apply, {**extra, "confirmed_via": "elicit"})
     out: dict[str, Any] = {"status": "applied", "action": plan.summary}
     if target is not None:
         out["instance"] = target
     out["confirmed_via"] = "elicit"
     if result is not None:
         out["result"] = result
+    if undo is not None:
+        out["undo"] = undo
     return out
 
 
@@ -914,8 +1053,8 @@ async def _apply_change(
     plan: Plan,
     apply: Callable[[], Awaitable[Any]],
     extra: dict[str, Any],
-) -> Any:
-    """Run `apply` with the audit events around it and return its result."""
+) -> tuple[Any, dict[str, Any] | None]:
+    """Run `apply` with the audit events around it; return its result and the filled-in undo (C81)."""
     try:
         result = await apply()
     except asyncio.CancelledError:
@@ -925,8 +1064,21 @@ async def _apply_change(
     except Exception as e:
         _emit(ctx, "apply_failed", tool, caller, plan.summary, error=scrub_text(str(e))[:300], **extra)
         raise
-    _emit(ctx, "applied", tool, caller, plan.summary, **extra)
-    return result
+    undo = undo_applied(plan.undo, result) if plan.undo is not None else None
+    if undo is not None:
+        # The event keeps the structured call: the rendered `back_out` line repeats it, and its
+        # `secret=<masked>` pairs would be re-scrubbed by the log filter, breaking the JSON line.
+        # Arguments are cut to the audit length here (the result keeps them whole for replaying).
+        from stutters_mcp_core.audit import redact_args
+
+        if "args" in undo:
+            logged = {"tool": undo["tool"], "args": redact_args(undo["args"], tool=undo["tool"])}
+        else:  # a text step, or a call whose arguments could not be filled (the reason stays)
+            logged = undo
+        _emit(ctx, "applied", tool, caller, plan.summary, undo=logged, **extra)
+    else:
+        _emit(ctx, "applied", tool, caller, plan.summary, **extra)
+    return result, undo
 
 
 def _emit(ctx: Context, event: str, tool: str, caller: str, summary: str, **extra: Any) -> None:

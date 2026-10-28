@@ -5,6 +5,9 @@
     async def test_contract():
         await assert_tool_contract(create_server(settings(writes=True, dangerous=True)), prefix="ise")
 
+    async def test_contract_with_undo_allowances():  # C81: write tools without Plan.undo warn (UndoWarning)
+        await assert_tool_contract(server, prefix="ise", undo_allow={"ise_api_call"})
+
     async def test_noop_contract(api):           # C71: these calls find the target already as asked
         await assert_tool_contract(server, prefix="fmc",
                                    noop_calls={"fmc_configure_ntp": {"device": "ftd1", "servers": [...]}})
@@ -38,10 +41,12 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import inspect
 import json
 import os
 import re
 import socket
+import warnings
 from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -68,6 +73,7 @@ __all__ = [
     "as_caller",
     "SNAPSHOT_UPDATE_ENV",
     "ToolManifest",
+    "UndoWarning",
     "assert_inbound_references",
     "assert_prompt_contract",
     "assert_prompt_snapshots",
@@ -92,6 +98,7 @@ __all__ = [
     "scenario_problems",
     "suite_pack_problems",
     "tool_contract_problems",
+    "undo_problems",
     "vocabulary_problems",
     "warn_vocabulary",
 ]
@@ -508,14 +515,60 @@ async def _noop_call_problems(
     return problems
 
 
+class UndoWarning(UserWarning):
+    """A write or dangerous tool never sets `Plan.undo` (C81): a warning, not a contract failure."""
+
+
+# A tool's own source that builds an undo: `undo=...` on its Plan or an `Undo(...)` call.
+_UNDO_SOURCE_RE = re.compile(r"\bundo\s*=|\bUndo\(")
+_CORE_WRITE_TOOLS = ("review_change", "list_pending_changes", "cancel_pending_change")
+
+
+def undo_problems(mcp: FastMCP[Any], prefix: str, *, allow: Iterable[str] = ()) -> list[str]:
+    """Write and dangerous tools that never set `Plan.undo` (C81), sorted. A tool counts as setting it
+    when its function's source builds one (`undo=` or `Undo(`), or when a Plan it built in this test
+    process carried one. A tool whose Plan comes from a helper elsewhere, or that has no back-out step to
+    give, goes in `allow` (or sets `undo="not reversible: <why>"`)."""
+    from stutters_mcp_core.writes import _undo_tools
+
+    tiers: dict[str, Any] = getattr(mcp, "_stutters_tiers", {})
+    fns: dict[str, Any] = getattr(mcp, "_stutters_tool_fns", {})
+    skip = {*allow, *(f"{prefix}_{c}" for c in _CORE_WRITE_TOOLS)}
+    missing: list[str] = []
+    for name, tier in sorted(tiers.items()):
+        if getattr(tier, "value", tier) not in ("write", "dangerous") or name in skip or name in _undo_tools:
+            continue
+        try:
+            source = inspect.getsource(fns[name])
+        except (KeyError, OSError, TypeError):
+            source = ""
+        if not _UNDO_SOURCE_RE.search(source):
+            missing.append(name)
+    return missing
+
+
 async def assert_tool_contract(
     mcp: FastMCP[Any],
     prefix: str,
     *,
     noop_calls: Mapping[str, Mapping[str, Any] | Iterable[Mapping[str, Any]]] | None = None,
+    warn_undo: bool = True,
+    undo_allow: Iterable[str] = (),
 ) -> None:
+    """Fail with every tool contract violation (see `tool_contract_problems`). With `warn_undo` (default),
+    write/dangerous tools that never set `Plan.undo` are reported as one UndoWarning (the test passes);
+    `undo_allow` names tools to leave out of it."""
     problems = await tool_contract_problems(mcp, prefix, noop_calls=noop_calls)
     assert not problems, "Tool contract violations:\n  " + "\n  ".join(problems)
+    if warn_undo:
+        missing = undo_problems(mcp, prefix, allow=undo_allow)
+        if missing:
+            warnings.warn(
+                f"{len(missing)} write tool(s) never set Plan.undo (the back-out step, C81): "
+                + ", ".join(missing),
+                UndoWarning,
+                stacklevel=2,
+            )
 
 
 async def call_tool(mcp: FastMCP[Any], name: str, args: dict[str, Any] | None = None) -> Any:

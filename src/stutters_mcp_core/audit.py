@@ -59,10 +59,12 @@ def redact_args(
     *,
     tool: str | None = None,
     redactors: Mapping[str, ArgRedactor] | None = None,
+    max_chars: int | None = MAX_ARG_CHARS,
 ) -> dict[str, Any]:
     """`args` as they may be logged or shown to an approver: secret-named arguments masked, the tool's
     registered redactors applied (`tool`, or `redactors` given directly), credential shapes and config
-    secrets scrubbed in every string, and each argument cut to MAX_ARG_CHARS."""
+    secrets scrubbed in every string, and each argument cut to `max_chars` (None: not cut, for arguments
+    a caller replays, such as a C81 undo)."""
     hooks = {**arg_redactors(tool), **(redactors or {})}
     out: dict[str, Any] = {}
     for k, v in (args or {}).items():
@@ -81,7 +83,7 @@ def redact_args(
                 continue
         v = redact_value(v)
         text = json.dumps(v, default=str)
-        out[k] = v if len(text) <= MAX_ARG_CHARS else text[:MAX_ARG_CHARS] + "...(truncated)"
+        out[k] = v if max_chars is None or len(text) <= max_chars else text[:max_chars] + "...(truncated)"
     return out
 
 
