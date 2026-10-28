@@ -8,6 +8,7 @@ import pytest
 from fastmcp import Client, FastMCP
 
 from stutters_mcp_core import build_server, suite
+from stutters_mcp_core.manifest import read_tool_manifests
 from stutters_mcp_core.prompts import find_tool_refs, rendered_text
 from stutters_mcp_core.suite import pack_problems
 from stutters_mcp_core.suite.access_review import PENDING_TOOLS, parse_stale_days
@@ -36,7 +37,7 @@ def test_in_pack_and_clean() -> None:
     sp = suite.PACK[NAME]
     assert sp.requires == PEERS and sp.meta()["tier"] == "read"
     assert "win" in suite.PEERS
-    assert set(PENDING_TOOLS) <= set(sp.tools)
+    assert set(PENDING_TOOLS) <= set(sp.tools) and sp.pending == PENDING_TOOLS
     assert pack_problems() == []
 
 
@@ -114,15 +115,32 @@ async def test_prompt_kit_and_pending(tmp_path: Path) -> None:
                 }
             )
         )
-    problems = [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p]
-    assert sorted(problems) == sorted(
-        f"suite prompt {NAME}: {t.split('_', 1)[0]} leg calls '{t}', which the {t.split('_', 1)[0]} manifest "
-        "does not list"
-        for t in PENDING_TOOLS
+    # The pending leg tools are missing everywhere: skipped legs, not failures, with no `pending=` list
+    # (C171: a new suite prompt must not block a server's core pin bump).
+    assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == []
+    # Servers that still pass the old waiver list are fine too.
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=list(PENDING_TOOLS))
+    assert [p for p in found if NAME in p] == []
+    # A peer ships a pending tool before core drops it: still nothing reported.
+    (tmp_path / "ise.json").write_text(
+        json.dumps(
+            {
+                "manifest": 1,
+                "server": "ise-mcp-server",
+                "prefix": "ise",
+                "tools": {"ise_list_admin_users": {}},
+            }
+        )
     )
-    pending = [t for t in PENDING_TOOLS]
-    problems = [p for p in await suite_pack_problems(server, "demo", tmp_path, pending=pending) if NAME in p]
-    assert problems == []
+    found = await suite_pack_problems(server, "demo", tmp_path, pending=["ise_list_admin_users"])
+    assert [p for p in found if NAME in p] == []
+    # A leg tool that is not pending is still checked.
+    (tmp_path / "fmc.json").write_text(
+        json.dumps({"manifest": 1, "server": "fmc-mcp-server", "prefix": "fmc", "tools": {}})
+    )
+    assert [p for p in await suite_pack_problems(server, "demo", tmp_path) if NAME in p] == [
+        f"suite prompt {NAME}: fmc leg calls 'fmc_list_users', which the fmc manifest does not list"
+    ]
 
 
 SUITE = Path(__file__).resolve().parents[3]
@@ -137,7 +155,7 @@ OWN = {
 
 async def test_against_sibling_manifests() -> None:
     """Local only (skipped in CI): every leg tool not in PENDING_TOOLS is in its server's own committed
-    manifest, and a pending tool a server now ships is reported (drop it from PENDING_TOOLS)."""
+    manifest; a pending tool a server now ships is listed (drop it from PENDING_TOOLS)."""
     paths = [
         SUITE / repo / "tests" / "manifests" / f"{prefix}.json"
         for prefix, repo in OWN.items()
@@ -145,10 +163,16 @@ async def test_against_sibling_manifests() -> None:
     ]
     if not paths:
         pytest.skip("no sibling server checkouts with manifests")
-    present = {p.stem for p in paths}
-    pending = [t for t in PENDING_TOOLS if t.split("_", 1)[0] in present]
-    problems = [p for p in await suite_pack_problems(_server(), "demo", *paths, pending=pending) if NAME in p]
+    problems = [p for p in await suite_pack_problems(_server(), "demo", *paths) if NAME in p]
     assert problems == []
+    # A pending tool is dropped only once every server's committed copy of its peer's manifest lists it, so
+    # no server's core pin bump starts failing on it (C171).
+    ready = []
+    for tool in PENDING_TOOLS:
+        copies = sorted(SUITE.glob(f"*-mcp-server/tests/manifests/{tool.split('_', 1)[0]}.json"))
+        if copies and all(tool in m.names for m in read_tool_manifests(*copies)):
+            ready.append(tool)
+    assert ready == [], "drop these from PENDING_TOOLS"
 
 
 def test_windows_server_name_maps_to_win() -> None:

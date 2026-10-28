@@ -181,6 +181,12 @@ Rules (enforced by `assert_tool_contract`):
   `stutters_mcp_core.testing.blast_radius.assert_dangerous_plans_counted(server, samples, skip={...})`
   previews each dangerous tool on the respx mock and fails on a Plan with neither (C29).
   Never bypass `preview_or_apply`: the safety rails (dry-run, change window, two-person) live there.
+- Desired-state writes (C71): when the current state the tool read for its fingerprint already matches the
+  request, set `Plan(noop=True, noop_reason="NTP servers already 192.0.2.1")`. `preview_or_apply` answers
+  `{"status": "no_change", "action", "summary", "details"}` with no confirm token, never calls `apply`, logs a
+  `noop` audit event and skips the rails (blast-radius limit, two-person, change window, dry-run). `Plan.blockers`
+  still win. Prove it with `assert_tool_contract(server, prefix, noop_calls={tool: args})`: each call, on the
+  respx mock of the matching state, must answer `no_change` with no `confirm`.
 - Multi-instance (ADR-004): keep per-appliance state on the client object from `get_client(ctx)` (never in
   module globals), read settings with `get_settings(ctx)`, and don't name a tool parameter `instance`.
   Read tools also run with `instance='*'` (C74): once per instance, several at a time, so a read must not

@@ -33,6 +33,10 @@ Define a suite prompt in a module under `stutters_mcp_core/suite/` (imported at 
         ...
         return plan.header + "\\n\\n" + numbered(steps)
 
+A leg may call a tool its server has not shipped yet: list it in the decorator's `pending=` (the module's
+`PENDING_TOOLS`). `pending_tools()` collects them across the pack, and the servers' `assert_suite_pack`
+waives them on its own, so a new suite prompt never blocks a server's core pin bump.
+
 Tests: `pack_problems()` checks the pack itself (core's own tests); servers check that the pack is
 registered and that every leg's tools exist on them and in their committed peer manifests with
 `testing.assert_suite_pack(server, "ise", "tests/manifests")`.
@@ -110,6 +114,7 @@ class SuitePrompt:
     legs: tuple[SuiteLeg, ...]
     tier: Tier = Tier.READ
     example: dict[str, str] = field(default_factory=dict)
+    pending: tuple[str, ...] = ()  # leg tools their server has not shipped yet (waived by assert_suite_pack)
 
     @property
     def requires(self) -> list[str]:
@@ -148,10 +153,13 @@ def suite_prompt(
     legs: Iterable[SuiteLeg],
     tier: Tier = Tier.READ,
     example: dict[str, str] | None = None,
+    pending: Iterable[str] = (),
     pack: dict[str, SuitePrompt] | None = None,
 ) -> Callable[[F], F]:
     """Decorator: add a `suite_<workflow>` prompt to the pack (`pack`, default PACK). The function takes
-    a `servers: SERVERS_ARG = ""` argument and builds its body with `plan_legs(legs, servers)`."""
+    a `servers: SERVERS_ARG = ""` argument and builds its body with `plan_legs(legs, servers)`.
+    `pending` names leg tools their server has not shipped yet: every server's `assert_suite_pack`
+    waives them (the leg is skipped where the tool is missing, not a failure)."""
     leg_list = tuple(legs)
     if not leg_list:
         raise ValueError("a suite prompt needs at least one leg")
@@ -164,6 +172,11 @@ def suite_prompt(
                 raise ValueError(f"leg {leg.peer!r} lists {t!r}, which is not a {leg.peer} tool")
     if example is not None and not all(isinstance(v, str) for v in example.values()):
         raise ValueError("example: argument values must be strings, as a client sends them")
+    pending_list = tuple(dict.fromkeys(pending))
+    leg_tools = {t for leg in leg_list for t in leg.tools}
+    for t in pending_list:
+        if t not in leg_tools:
+            raise ValueError(f"pending tool {t!r} is not called by any leg")
     target = PACK if pack is None else pack
 
     def deco(fn: F) -> F:
@@ -174,7 +187,7 @@ def suite_prompt(
             raise ValueError(f"suite prompt {name!r} is defined twice")
         if "servers" not in inspect.signature(fn).parameters:
             raise ValueError(f"suite prompt {name!r} must take a `servers: SERVERS_ARG = ''` argument")
-        target[name] = SuitePrompt(name, title, fn, leg_list, tier, dict(example or {}))
+        target[name] = SuitePrompt(name, title, fn, leg_list, tier, dict(example or {}), pending_list)
         return fn
 
     return deco
@@ -267,6 +280,12 @@ def register(reg: ToolRegistrar, pack: Mapping[str, SuitePrompt] | None = None) 
             meta=meta,
         )
         registered[sp.name] = meta
+
+
+def pending_tools(pack: Mapping[str, SuitePrompt] | None = None) -> dict[str, tuple[str, ...]]:
+    """The pack's registry of leg tools not shipped yet: prompt name -> its `pending` tools (prompts
+    with none are left out). `testing.assert_suite_pack` waives every one of them."""
+    return {sp.name: sp.pending for sp in (PACK if pack is None else pack).values() if sp.pending}
 
 
 def is_suite_prompt(name: str, meta: Mapping[str, Any] | None) -> bool:

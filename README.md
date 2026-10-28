@@ -26,7 +26,7 @@ test helpers: tool and prompt contract linters plus the prompt test kit (manifes
 `<server> tools --json`, cross-server reference checks, prompt snapshots, scenario manifests checked against
 those manifests ([docs/scenarios/README.md](docs/scenarios/README.md))) and the suite prompt pack
 (`suite_*` cross-product prompts every server registers, [docs/SUITE-PROMPTS.md](docs/SUITE-PROMPTS.md)), with
-the snapshot contract for pre/post change checks ([docs/SNAPSHOTS.md](docs/SNAPSHOTS.md)). Product-specific code lives in each server repo.
+the snapshot contract for pre/post change checks, health and per-object configuration digests ([docs/SNAPSHOTS.md](docs/SNAPSHOTS.md)). Product-specific code lives in each server repo.
 
 Production controls, all opt-in ([docs/PRODUCTION.md](docs/PRODUCTION.md)): safety rails (dry-run, change
 windows, deny/allow lists, blast-radius limits, two-person confirm), per-user roles, OAuth 2.1 next to named

@@ -66,6 +66,9 @@ Audit events added: `blocked` (a preview with blockers, including a product tool
 `refused` (a confirm refused by a rail or blocker); `cancelled` (a pending two-person change withdrawn
 or rejected);
 `preview` / `applied` / `apply_failed` carry the `policy` section when rails are on.
+`noop` (C71): the write found the target already in the requested state (`Plan.noop`); the answer is
+`status: no_change` with no confirm token, and no rail (blast radius, two-person, change window, dry-run)
+applies because nothing is changed.
 
 ### Runtime, time-boxed overrides of a server's rails (roadmap C70)
 
@@ -275,7 +278,7 @@ scrape_configs:
 | `mcp_info` | gauge | `server`, `version`, `core_version` |
 | `mcp_tool_calls_total` | counter | `server`, `tool`, `outcome` (`ok` / `error`) |
 | `mcp_tool_duration_seconds` | histogram | `server`, `tool` |
-| `mcp_write_events_total` | counter | `server`, `tool`, `event` (`preview`, `applied`, `apply_failed`, `blocked`, `refused`) |
+| `mcp_write_events_total` | counter | `server`, `tool`, `event` (`preview`, `applied`, `apply_failed`, `blocked`, `refused`, `noop`) |
 | `mcp_upstream_requests_total` | counter | `product`, `method`, `status` (HTTP code, `timeout`, `error`) |
 | `mcp_upstream_duration_seconds` | histogram | `product`, `method` |
 | `mcp_upstream_retries_total` | counter | `product`, `reason` (HTTP code, `timeout`, `error`) |

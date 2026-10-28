@@ -5,7 +5,8 @@ Catalyst Center, FMC, SD-WAN Manager and CML, with Active Directory resolving th
 of accounts and one list of findings. Read-only.
 
 Some leg tools are small reads still to ship on their servers (ise I74, catc D60, fmc and cml follow-ups);
-`PENDING_TOOLS` lists them, for the servers' `assert_suite_pack(pending=...)` until they exist.
+`PENDING_TOOLS` lists them (the prompt's `pending`): `assert_suite_pack` waives them on every server until
+they ship. Drop a tool from it once every server's committed manifest of that peer lists it.
 """
 
 from typing import Annotated
@@ -85,6 +86,7 @@ def parse_stale_days(stale_days: str) -> int:
     title="Privileged access review across platforms",
     legs=LEGS,
     example={"stale_days": "90", "scope": "privileged"},
+    pending=PENDING_TOOLS,
 )
 def suite_access_review(
     stale_days: Annotated[

@@ -394,7 +394,14 @@ class Plan:
     (`stutters_mcp_core.testing.blast_radius.assert_dangerous_plans_counted` checks); never both.
 
     `two_person`: this change always needs a second caller to confirm, whatever MCP_TWO_PERSON_TOOLS
-    says (runtime rail overrides, C70)."""
+    says (runtime rail overrides, C70).
+
+    `noop` (C71): the target is already in the requested state (the tool compared the current state it
+    read for the fingerprint with what was asked for). `preview_or_apply` then returns
+    `{"status": "no_change", ...}` with no confirm token, never calls `apply`, writes a `noop` audit event
+    and skips the rails (blast-radius limits, two-person, change window, dry-run, elicitation): there is
+    nothing to confirm. `noop_reason` says why, e.g. "NTP servers already 192.0.2.1, 192.0.2.2".
+    `Plan.blockers` still win over `noop` (a request that can't be valid isn't "already applied")."""
 
     summary: str
     details: dict[str, Any] = field(default_factory=dict)
@@ -404,8 +411,12 @@ class Plan:
     blast_radius: int | None = None
     two_person: bool = False
     blast_unknown: str | None = None
+    noop: bool = False
+    noop_reason: str | None = None
 
     def __post_init__(self) -> None:
+        if self.noop_reason is not None and not self.noop:
+            raise ValueError("Plan: noop_reason is only meaningful with noop=True")
         if self.blast_unknown is not None:
             if self.blast_radius is not None:
                 raise ValueError("Plan: set blast_radius or blast_unknown, not both")
@@ -627,6 +638,8 @@ async def preview_or_apply(
     store = get_previews(ctx)
     caller = current_caller()
     target = target_name()
+    if plan.noop and not plan.blockers:
+        return _no_change(ctx, store, tool, caller, target, plan, confirm)
     token_tool = tool if target is None else f"{tool}@{target}"  # a token only works on its target
     tier = _tier_of(ctx, tool)
     policy, info, blockers, refusals, two_person = _rails(ctx, tool, tier, plan, target)
@@ -784,6 +797,57 @@ async def preview_or_apply(
         out["approved_by"] = caller
     if result is not None:
         out["result"] = result
+    return out
+
+
+NO_CHANGE_NOTE = (
+    "The target is already in the requested state: nothing was changed and no confirm token is needed."
+)
+
+
+def _no_change(
+    ctx: Context,
+    store: PreviewStore,
+    tool: str,
+    caller: str,
+    target: str | None,
+    plan: Plan,
+    confirm: str | None,
+) -> dict[str, Any]:
+    """C71: the answer for a Plan(noop=True): no token, no apply, no rails (nothing to limit or approve).
+    A confirm for an earlier preview of the same change is dropped: the target got there anyway."""
+    extra: dict[str, Any] = {}
+    if target is not None:
+        extra["instance"] = target
+    if plan.noop_reason:
+        extra["reason"] = plan.noop_reason
+    dropped = False
+    if confirm is not None:
+        # Only a token issued for this change (same tool and target, this caller or a two-person
+        # approver) is dropped: a token for another tool or user is left alone.
+        token_tool = tool if target is None else f"{tool}@{target}"
+        pending = store.peek(confirm)
+        if (
+            pending is not None
+            and pending.tool == token_tool
+            and (pending.caller == caller or pending.two_person)
+        ):
+            store.cancel(confirm)
+            dropped = True
+            extra["confirm_dropped"] = True
+    out: dict[str, Any] = {
+        "status": "no_change",
+        "action": plan.summary,
+        "summary": plan.noop_reason or "Already in the requested state.",
+    }
+    if target is not None:
+        out["instance"] = target
+    if plan.details:
+        out["details"] = plan.details
+    out["note"] = NO_CHANGE_NOTE
+    if dropped:
+        out["note"] += " The confirm token given was dropped."
+    _emit(ctx, "noop", tool, caller, plan.summary, **extra)
     return out
 
 
