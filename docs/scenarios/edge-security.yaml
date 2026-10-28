@@ -1,0 +1,42 @@
+# C55 Edge security and FTD service insertion: the branch edge's own firewall, UTD and SSL proxy, an FTD in
+# the service chain, each flow's verdict proven, the segmentation audited (C49) and a leaking host contained.
+scenario: 1
+name: edge-security
+title: Edge security and FTD service insertion
+epic: 104
+servers: [catsdwan, fmc, ise, catc, cml, suite]
+# Suite prompts (C48) ship in core and register on every server, so no one server's manifest owns them.
+no_manifest: [suite]
+steps:
+  - tool: catsdwan_get_firewall_policy
+    leaves: [policy_group, edge_zones]
+    note: W47 zone-based and identity firewall on the branch edges
+  - tool: catsdwan_utd_status
+    needs: [policy_group]
+    note: W48 UTD (IPS, URL filtering, AMP) running on the edges
+  - tool: catsdwan_ssl_proxy_ca
+    needs: [policy_group]
+    note: W49 SSL proxy with the CA from the lab CA
+  - tool: catsdwan_service_chains
+    leaves: [service_chain]
+    note: W50 service chain to the hub FTD and the branch FTD
+  - tool: fmc_service_chain_check
+    needs: [service_chain]
+    leaves: [chain_ftd]
+    note: F88 the FTD as the service-chain target
+  - prompt: catsdwan_trace_through_firewall
+    calls: [catsdwan_service_chains, fmc_packet_tracer, fmc_rule_lookup]
+    needs: [edge_zones, chain_ftd]
+    note: one flow's verdict per layer (edge firewall, then the FTD), with the deciding rule named
+  - prompt: suite_segmentation_audit
+    calls: [catsdwan_omp_routes, catsdwan_get_firewall_policy, ise_get_egress_matrix, fmc_rule_lookup,
+            catc_get_sda_fabric, cml_check_reachability]
+    needs: [edge_zones]
+    leaves: [leaking_host]
+    note: C49 IoT and corporate segments at the branch; the deliberate leak is found
+  - tool: catsdwan_contain_at_edge
+    needs: [leaking_host]
+    note: W45 contain the host at its WAN edge, then rerun the audit
+requires:
+  recipes: [cat-sdwan-secure]
+  fmc_device_slots: 2
