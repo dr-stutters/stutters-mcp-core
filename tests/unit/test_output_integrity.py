@@ -178,6 +178,23 @@ def test_object_result_unsplittable_value_still_valid_json() -> None:
     assert data["truncated"] is True and len(result.content[0].text) <= max_chars()  # type: ignore[union-attr]
 
 
+def test_object_result_wrapper_stays_in_budget_with_escaping() -> None:
+    # A quote-heavy value grows when JSON-escaped inside the wrapper's `text`.
+    quoted = json.dumps({f"k{i}": "v" for i in range(5000)})
+    result = object_result({"id": "x", "name": quoted}, partial=True)
+    text = result.content[0].text  # type: ignore[union-attr]
+    data = json.loads(text)
+    assert len(text) <= max_chars() and data["truncated"] is True and data["partial"] is True
+    assert data["note"].startswith(PARTIAL_NOTE)
+
+
+def test_object_result_shrink_keeps_own_note() -> None:
+    obj = {"id": 1, "note": "Own note.", "rules": ["x" * 100] * 500}
+    data: Any = object_result(obj, partial=True).structured_content
+    assert data["note"].startswith(f"Own note. {PARTIAL_NOTE} Object too large")
+    assert data["note"].count(PARTIAL_NOTE) == 1
+
+
 def test_object_result_top_level_list_is_trimmed_valid() -> None:
     result = object_result([{"id": i, "pad": "p" * 100} for i in range(1000)])
     data: Any = result.structured_content

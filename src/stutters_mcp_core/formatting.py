@@ -245,8 +245,11 @@ def shrink_object(
     top-level name) the tool or argument that fetches it; and a `note` (`note` first, if given).
     The result can still be over budget when one protected field alone is too big."""
     hints = fetch_hints or {}
-    final_note = f"{note} {_SHRINK_NOTE}" if note else _SHRINK_NOTE
     out = json.loads(dumps(data))  # a deep copy we can cut, with exotic values already stringified
+    # The object's own note (a tool warning, a partial-collection note) stays in front of ours.
+    own = out.get("note") if isinstance(out.get("note"), str) else None
+    parts = [own, note if note and not (own and note in own) else None, _SHRINK_NOTE]
+    final_note = " ".join(p for p in parts if p)
     dropped: list[dict[str, Any]] = []
 
     def framed() -> dict[str, Any]:
@@ -318,7 +321,7 @@ def object_result(
             while len(items) > 1 and len(dumps(items)) > _max_chars - 400:
                 items = items[: max(1, len(items) * 3 // 4)]
             if _fits(items):
-                payload = {
+                payload: dict[str, Any] = {
                     "results": items,
                     "returned": len(items),
                     "total": len(data),
@@ -329,12 +332,16 @@ def object_result(
                 }
                 return ToolResult(content=dumps(payload), structured_content=payload)
         # One indivisible value (a huge string or protected field): keep the reply valid JSON.
-        payload = {
-            "truncated": True,
-            "chars": len(text),
-            "text": text[: max(0, _max_chars - 300)],
-            "note": "Object too large for one response and not divisible by field; narrow the request.",
-        }
+        wrap_note = "Object too large for one response and not divisible by field; narrow the request."
+        cut = text[: max(0, _max_chars - 300)]
+        payload = {"truncated": True, "chars": len(text), "text": cut}
+        payload["note"] = f"{note} {wrap_note}" if note else wrap_note
+        if partial:
+            payload["partial"] = True
+        # JSON-escaping the embedded text (quotes, backslashes) can grow it past the budget: trim more.
+        while len(dumps(payload)) > _max_chars and cut:
+            cut = cut[: max(0, len(cut) - (len(dumps(payload)) - _max_chars) - 1)]
+            payload["text"] = cut
         return ToolResult(content=dumps(payload), structured_content=payload)
     if fmt == "markdown" and isinstance(data, dict):
         return ToolResult(content=kv_markdown(data))
