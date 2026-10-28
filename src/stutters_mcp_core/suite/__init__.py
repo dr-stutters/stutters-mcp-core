@@ -333,4 +333,5 @@ from stutters_mcp_core.suite import (  # noqa: E402, F401
     access_review,
     asbuilt_drift,
     change_check,
+    decommission_site,
 )

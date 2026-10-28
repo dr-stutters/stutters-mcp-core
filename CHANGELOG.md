@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-28
+
+### Added
+- Scenario manifests (C23, #70): `testing.scenario` (`assert_scenarios`, `load_scenario`, `scenario_problems`)
+  checks a cross-product scenario's steps, hand-offs and `requires:` block against the servers' `tools --json`
+  manifests; catalogue, template and draft manifests for C24-C27 in docs/scenarios/.
+- Suite pack: `suite_decommission_site(site, subnets, dns_zone, servers)` (C52, #125): dangerous suite prompt that
+  inventories a site across SD-WAN, Catalyst Center, ISE, FMC and Windows, removes it product by product after a
+  preview each, and verifies nothing is left.
+
+### Changed
+- `authlib` 1.9.0 -> 1.9.1 in uv.lock (GHSA-8m4g-j4wp-wgcg).
+
+### Adopting
+- Suite pack (C52): commit the new prompt snapshot file; `assert_suite_pack` needs
+  `pending=["catsdwan_remove_device"]` until cat-sdwan W53 ships.
+- Scenarios (C23): the owning servers wire `assert_scenarios(..., server=, prefix=)` into their CI.
+
 ## [0.16.1] - 2026-10-25
 
 ### Changed
