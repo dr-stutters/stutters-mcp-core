@@ -58,8 +58,25 @@ def is_secret_key(key: str) -> bool:
     return key not in NOT_SECRET_KEYS and bool(SECRET_KEY_RE.search(key))
 
 
-def _is_flag(v: Any) -> bool:
-    return isinstance(v, bool) or (isinstance(v, str) and v.strip().lower() in _FLAG_VALUES)
+# A key that names a switch rather than a secret: enable*/is*/allow*/use* followed by a word boundary
+# (camelCase, snake_case, or nothing), e.g. `enableMultiSecret`, `is_psk_set`, `useMd5Key`, `enabled`. Not
+# when the rest is the secret itself (`enableSecret`, `enable_password`: IOS enable secrets).
+_FLAG_KEY_RE = re.compile(r"^(?:enable|is|allow|use)(?:d|s)?(?=$|_|[A-Z0-9])")
+_SECRET_WORD_RE = re.compile(r"^_?(?:secret|password|passwd|pass|passphrase|key)\d*$", re.IGNORECASE)
+
+
+def _is_flag_key(key: str) -> bool:
+    m = _FLAG_KEY_RE.match(key)
+    return m is not None and not _SECRET_WORD_RE.match(key[m.end() :])
+
+
+def _is_flag(v: Any, key: str | None = None) -> bool:
+    """Whether a value under a secret-named key is left unmasked as a flag (C72). Real booleans always
+    are; a flag-looking string (true/false/yes/no/on/off/enabled/disabled) only under a flag-named key,
+    so a password that is literally 'on' or 'true' is masked."""
+    if isinstance(v, bool):
+        return True
+    return key is not None and _is_flag_key(key) and isinstance(v, str) and v.strip().lower() in _FLAG_VALUES
 
 
 def mask_secrets(data: Any) -> Any:
@@ -67,13 +84,14 @@ def mask_secrets(data: Any) -> Any:
     return compact(data, drop=(), keep_empty=True)
 
 
-def mask_all(v: Any) -> Any:
-    """Mask every scalar leaf (keeps structure so the model sees what kind of value is there)."""
+def mask_all(v: Any, _key: str | None = None) -> Any:
+    """Mask every scalar leaf (keeps structure so the model sees what kind of value is there). Booleans,
+    None and flag strings under flag-named keys (`enabled: "true"`) stay."""
     if isinstance(v, dict):
-        return {k: mask_all(x) for k, x in v.items()}
+        return {k: mask_all(x, str(k)) for k, x in v.items()}
     if isinstance(v, list):
-        return [mask_all(x) for x in v]
-    return v if _is_flag(v) or v is None else MASK
+        return [mask_all(x, _key) for x in v]
+    return v if _is_flag(v, _key) or v is None else MASK
 
 
 def compact(
@@ -95,7 +113,7 @@ def compact(
         for k, val in v.items():
             if k in drop_set:
                 continue
-            if mask_secrets and is_secret_key(str(k)) and not _is_flag(val):
+            if mask_secrets and is_secret_key(str(k)) and not _is_flag(val, str(k)):
                 if val in (None, "", [], {}):
                     if keep_empty:
                         out[k] = val

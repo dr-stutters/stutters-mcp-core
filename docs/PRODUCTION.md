@@ -450,3 +450,20 @@ log platform; every line starts `{"ts": ..., "audit": {...}}`.
 A refused call says how long to wait; it is audited (`rate_limited`) and counted (`mcp_rate_limited_total`).
 `<prefix>_status` is never limited. This stops one runaway client or leaked token from monopolising the
 appliance; `<P>_RATE_LIMIT` still paces the server's own requests to the appliance.
+
+## JSON-text list and dict arguments (roadmap C72)
+
+A client keeps the tool list it fetched at session start. After a redeploy adds a list- or dict-valued
+argument, such a client sends it as JSON text (`redistribute='[{"protocol": "ospf"}]'`) and validation
+refuses it ("Input should be a valid list ... input_type=str"). With `MCP_PARSE_JSON_ARGS=true` (default
+`false`) the server `json.loads` a string argument before validation when the parameter only takes a list
+or only an object (dict, model) and the text starts with `[` or `{` to match; the result is validated as
+usual. Parameters that also accept a string, scalars, and text that isn't valid JSON are left alone. The
+audit log and previews see the parsed structure, so secret-named keys inside it are masked.
+
+## Secret masking of flag-like values (roadmap C72)
+
+A secret-named field (`neighborSecret`, `md5Key`, `authKey`, ...) is masked whatever its value: a password
+that is literally `on`, `true` or `off` no longer shows in clear. Only real booleans stay, plus flag
+strings under flag-named keys (`enable*`, `is*`, `allow*`, `use*`, e.g. `isPskSet: "true"`, but not
+`enableSecret` / `enable_password`) and keys in `formatting.NOT_SECRET_KEYS`.

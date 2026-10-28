@@ -220,6 +220,11 @@ def build_server(
         auth=auth,
         middleware=[AuditMiddleware(spec.name, roles)],
     )
+    if settings.mcp_parse_json_args:
+        from stutters_mcp_core.json_args import JsonArgsMiddleware
+
+        # C72: first in the chain, so the audit log and previews see the parsed (and masked) structure
+        mcp.middleware.insert(0, JsonArgsMiddleware(mcp))
     if settings.mcp_caller_rate_limit is not None or settings.mcp_caller_rate_limit_by_role:
         from stutters_mcp_core.inbound_limits import CallerRateLimitMiddleware, parse_role_limits
 

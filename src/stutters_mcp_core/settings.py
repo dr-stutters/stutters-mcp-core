@@ -215,6 +215,10 @@ class BaseServerSettings(BaseSettings):
         default=4, ge=1, le=32, validation_alias=_alias("MCP_FANOUT_CONCURRENCY")
     )
 
+    # --- JSON-string list/dict arguments (C72): a client whose tool schema predates a redeploy sends a
+    # list- or dict-valued argument as JSON text; parse it before validation. Off by default.
+    mcp_parse_json_args: bool = Field(default=False, validation_alias=_alias("MCP_PARSE_JSON_ARGS"))
+
     # --- MCP background tasks (C12): `reg.write(..., task=True)` tools become MCP tasks -------
     mcp_tasks: bool = Field(default=False, validation_alias=_alias("MCP_TASKS"))
     mcp_tasks_url: str = Field(default="memory://", validation_alias=_alias("MCP_TASKS_URL"))

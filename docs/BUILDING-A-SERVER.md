@@ -84,7 +84,7 @@ class Settings(BaseServerSettings):
 You get for free: `<P>_URL, _USERNAME, _PASSWORD, _TOKEN, _VERIFY_SSL, _CA_BUNDLE, _TIMEOUT, _RETRIES,
 _RATE_LIMIT, _MAX_CONCURRENCY` plus `MCP_TRANSPORT/HOST/PORT/PATH/AUTH_TOKENS(_FILE)`,
 `MCP_ENABLE_WRITES`, `MCP_ENABLE_DANGEROUS`, `MCP_CONFIRM_TTL`, `MCP_CONFIRM_MODE`, `MCP_CACHE_DIR`,
-`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `LOG_LEVEL`, and the opt-in production
+`MCP_MAX_RESPONSE_CHARS`, `MCP_TASK_TIMEOUT`, `MCP_AUDIT_LOG`, `MCP_PARSE_JSON_ARGS`, `LOG_LEVEL`, and the opt-in production
 controls in [PRODUCTION.md](PRODUCTION.md) (`MCP_DRY_RUN`, `MCP_CHANGE_WINDOW`, `MCP_DENY_TOOLS`, ...).
 
 Every secret setting (any `SecretStr` field, yours too) can also come from a file: `<VAR>_FILE`, e.g.
@@ -122,6 +122,9 @@ class FmcApp:
 - One pager per paging style is enough: endpoints with a smaller page-size cap pass it per call,
   `await app.pager.fetch_page(app.api, path, params, limit=limit, offset=offset, max_page=25)` (also `fetch_all(..., max_page=)`).
 - `error_detail=` is a function that pulls a readable message out of the product's error body.
+- A 403 ends with `ApiClient.forbidden_hint(detail)` (C72): by default the credentials and role sentence, or, when
+  the detail names a feature (flag) or a licence, a sentence that leaves the credentials out. Subclass and override
+  it for product refusals the default doesn't recognise (return None for no sentence). 401s always name the credentials.
 
 ## 5. Tools
 

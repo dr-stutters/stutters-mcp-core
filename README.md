@@ -31,7 +31,7 @@ the snapshot contract for pre/post change checks, health and per-object configur
 Production controls, all opt-in ([docs/PRODUCTION.md](docs/PRODUCTION.md)): safety rails (dry-run, change
 windows, deny/allow lists, blast-radius limits, two-person confirm), per-user roles, OAuth 2.1 next to named
 tokens, secret files/loaders and log scrubbing, Prometheus `/metrics`, several appliances per server with
-per-instance write rules and `instance='*'` fan-out on reads, per-caller rate limits, audit-log rotation and MCP background tasks. Supply chain:
+per-instance write rules and `instance='*'` fan-out on reads, per-caller rate limits, audit-log rotation, MCP background tasks and JSON-text list/dict arguments (`MCP_PARSE_JSON_ARGS`). Supply chain:
 [docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md); security policy: [SECURITY.md](SECURITY.md).
 
 ## Using it from a server
