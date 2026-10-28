@@ -29,7 +29,7 @@ those manifests ([docs/scenarios/README.md](docs/scenarios/README.md))) and the 
 the snapshot contract for pre/post change checks, health and per-object configuration digests ([docs/SNAPSHOTS.md](docs/SNAPSHOTS.md)). Product-specific code lives in each server repo.
 
 Production controls, all opt-in ([docs/PRODUCTION.md](docs/PRODUCTION.md)): safety rails (dry-run, change
-windows, deny/allow lists, blast-radius limits, two-person confirm), per-user roles, OAuth 2.1 next to named
+windows, deny/allow lists, blast-radius limits, two-person confirm, a backup-age requirement before dangerous changes with `MCP_REQUIRE_BACKUP_HOURS`), per-user roles, OAuth 2.1 next to named
 tokens, secret files/loaders and log scrubbing, Prometheus `/metrics`, several appliances per server with
 per-instance write rules and `instance='*'` fan-out on reads, per-caller rate limits, audit-log rotation, MCP background tasks and JSON-text list/dict arguments (`MCP_PARSE_JSON_ARGS`). Supply chain:
 [docs/SUPPLY-CHAIN.md](docs/SUPPLY-CHAIN.md); security policy: [SECURITY.md](SECURITY.md).
